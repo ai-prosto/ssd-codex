@@ -53,16 +53,16 @@ Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/3
 
 
 ### TASK-004: Гейт код-ревью отдельным агентом
-P2 | 🔍 REVIEW   Est: 0.5d
+P2 | ✅ DONE   Est: 0.5d
 
 Реализовать сценарии BEH-16, BEH-17 (DT-04, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-04
 **Depends on:** [TASK-001], [TASK-003]
 
 **Checklist:**
-- [ ] реализовать BEH-16: Диф перед коммитом смотрит отдельный агент-ревьюер, автоматически
-- [ ] реализовать BEH-17: Вердикт `block` перезапускает задачу с замечаниями и считается ретраем
-- [ ] проверка группы: tests/test_review.py::test_reviewer_is_separate_automatic_agent (kind: pytest), tests/test_review.py::test_block_restarts_task_with_comments_as_retry (kind: pytest) зелёные на BEH-16, BEH-17
+- [x] реализовать BEH-16: Диф перед коммитом смотрит отдельный агент-ревьюер, автоматически
+- [x] реализовать BEH-17: Вердикт `block` перезапускает задачу с замечаниями и считается ретраем
+- [x] проверка группы: tests/test_review.py::test_reviewer_is_separate_automatic_agent (kind: pytest), tests/test_review.py::test_block_restarts_task_with_comments_as_retry (kind: pytest) зелёные на BEH-16, BEH-17
 
 
 
