@@ -18,17 +18,17 @@ Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/3
 
 
 ### TASK-002: CLI и команда создания спеки планировщиком
-P2 | 🔍 REVIEW   Est: 0.5d
+P2 | ✅ DONE   Est: 0.5d
 
 Реализовать сценарии BEH-05, BEH-06, BEH-07 (DT-02, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-02
 **Depends on:** [TASK-001]
 
 **Checklist:**
-- [ ] реализовать BEH-05: Описание программы — аргументом или из файла
-- [ ] реализовать BEH-06: Команда создания спеки пишет ровно три файла в формате spec-runner
-- [ ] реализовать BEH-07: Создание спеки и запуск — две отдельные подкоманды, спека не исполняет
-- [ ] проверка группы: tests/test_cli_spec.py::test_description_from_argument_or_from_file (kind: pytest), tests/test_cli_spec.py::test_writes_exactly_three_files_in_spec_runner_format (kind: pytest), tests/test_cli_spec.py::test_spec_command_does_not_execute_tasks (kind: pytest) зелёные на BEH-05, BEH-06, BEH-07
+- [x] реализовать BEH-05: Описание программы — аргументом или из файла
+- [x] реализовать BEH-06: Команда создания спеки пишет ровно три файла в формате spec-runner
+- [x] реализовать BEH-07: Создание спеки и запуск — две отдельные подкоманды, спека не исполняет
+- [x] проверка группы: tests/test_cli_spec.py::test_description_from_argument_or_from_file (kind: pytest), tests/test_cli_spec.py::test_writes_exactly_three_files_in_spec_runner_format (kind: pytest), tests/test_cli_spec.py::test_spec_command_does_not_execute_tasks (kind: pytest) зелёные на BEH-05, BEH-06, BEH-07
 
 
 
