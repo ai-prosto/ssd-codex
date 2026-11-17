@@ -3,17 +3,17 @@
 Сгенерировано task_bridge из behaviour-spec бандла sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076 (шаг 3 плана развития конвейера; группировка задач — по Feature-секциям). Личный путь: бриф одобрен владельцем в разговоре, задачи исполняются сразу.
 
 ### TASK-001: Формат spec-runner и единственный конфиг
-P2 | 🔍 REVIEW   Est: 0.5d
+P2 | ✅ DONE   Est: 0.5d
 
 Реализовать сценарии BEH-01, BEH-02, BEH-03, BEH-04 (DT-01, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-01
 
 **Checklist:**
-- [ ] реализовать BEH-01: Готовый набор spec-runner разбирается своим парсером
-- [ ] реализовать BEH-02: Ошибки формата и зависимостей видны до платных вызовов
-- [ ] реализовать BEH-03: Модели по роли в одном конфиге, вендора в схеме нет
-- [ ] реализовать BEH-04: Лимиты задаются в конфиге, стоп по расходу выключен по умолчанию
-- [ ] проверка группы: tests/test_format.py::test_parses_ready_spec_runner_set (kind: pytest), tests/test_format.py::test_reports_format_and_dependency_errors_without_api_calls (kind: pytest), tests/test_config.py::test_models_per_role_and_no_vendor_key (kind: pytest), tests/test_config.py::test_limits_from_config_budget_disabled_by_default (kind: pytest) зелёные на BEH-01, BEH-02, BEH-03, BEH-04
+- [x] реализовать BEH-01: Готовый набор spec-runner разбирается своим парсером
+- [x] реализовать BEH-02: Ошибки формата и зависимостей видны до платных вызовов
+- [x] реализовать BEH-03: Модели по роли в одном конфиге, вендора в схеме нет
+- [x] реализовать BEH-04: Лимиты задаются в конфиге, стоп по расходу выключен по умолчанию
+- [x] проверка группы: tests/test_format.py::test_parses_ready_spec_runner_set (kind: pytest), tests/test_format.py::test_reports_format_and_dependency_errors_without_api_calls (kind: pytest), tests/test_config.py::test_models_per_role_and_no_vendor_key (kind: pytest), tests/test_config.py::test_limits_from_config_budget_disabled_by_default (kind: pytest) зелёные на BEH-01, BEH-02, BEH-03, BEH-04
 
 
 
