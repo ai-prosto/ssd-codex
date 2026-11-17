@@ -38,6 +38,23 @@ class ConfigError(Exception):
     """sdd-codex.config.yaml is missing, malformed, or has unknown keys."""
 
 
+class TaskRejected(Exception):
+    """A task record cannot be executed as written; carries the task id.
+
+    Raised before any paid call or code change: a task without a verify
+    command, without a file list, or with a path escaping the repository is
+    refused by name instead of being papered over with defaults.
+    """
+
+    def __init__(self, task_id: str, message: str) -> None:
+        super().__init__(f"{task_id}: {message}")
+        self.task_id = task_id
+
+
+class GitError(Exception):
+    """A git operation failed or the working tree is in the wrong state."""
+
+
 class PlannerError(Exception):
     """The planner agent failed or returned unusable output."""
 
