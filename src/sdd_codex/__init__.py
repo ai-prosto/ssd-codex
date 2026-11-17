@@ -5,12 +5,20 @@ execute their tasks through coding agents run as CLI subprocesses.
 """
 
 from sdd_codex.config import Config, load_config, parse_config
-from sdd_codex.errors import ConfigError, SpecFormatError, SpecIssue
+from sdd_codex.errors import (
+    CliError,
+    ConfigError,
+    PlannerError,
+    SpecFormatError,
+    SpecIssue,
+)
 from sdd_codex.specset import SpecSet, load_spec_set, validate_spec_set
 
 __all__ = [
+    "CliError",
     "Config",
     "ConfigError",
+    "PlannerError",
     "SpecFormatError",
     "SpecIssue",
     "SpecSet",

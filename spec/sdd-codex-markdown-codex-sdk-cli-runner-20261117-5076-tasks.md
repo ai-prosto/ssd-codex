@@ -18,7 +18,7 @@ Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/3
 
 
 ### TASK-002: CLI и команда создания спеки планировщиком
-P2 | TODO   Est: 0.5d
+P2 | 🔄 IN_PROGRESS   Est: 0.5d
 
 Реализовать сценарии BEH-05, BEH-06, BEH-07 (DT-02, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-02
