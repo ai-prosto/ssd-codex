@@ -124,6 +124,15 @@ class Git:
     def diff_head(self) -> str:
         return self._run("diff", "HEAD")
 
+    def diff_head_with_untracked(self) -> str:
+        """``git diff HEAD`` with new files included: untracked paths are
+        registered with ``--intent-to-add`` first (artifacts excluded), as a
+        plain ``diff HEAD`` would silently hide files the agent created."""
+        self._run(
+            "add", "--intent-to-add", "-A", "--", ".", f":(exclude){ARTIFACTS_DIR}"
+        )
+        return self._run("diff", "HEAD")
+
     def unstage_all(self) -> None:
         """Reset the index to HEAD; without this a staged edit survives
         ``checkout -- .`` (which restores from the index) and ``clean``
