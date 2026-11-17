@@ -52,6 +52,22 @@ def test_test_files_come_from_selectors_and_command_tokens() -> None:
     # interpreter path are never treated as repository test files.
     assert command_files(task) == ["tests/test_a.py", "tests/check.py"]
     assert command_files(make_task(test_command="make check")) == []
+    # A bare program name with a version suffix is a PATH tool, not a repo file.
+    assert command_files(
+        make_task(test_command="python3.11 -m pytest tests/test_x.py")
+    ) == ["tests/test_x.py"]
+
+
+def test_selectors_with_quotes_are_shell_safe() -> None:
+    """A pytest id with an apostrophe must produce a parseable command, not a
+    mid-attempt crash; an unparseable **Test:** command is rejected up front."""
+    config = VerifyConfig(selector_runner="uv run pytest {selectors} -q")
+    selector = "tests/test_x.py::test_a[can't]"
+    command = verify_command(make_task(verifies=[selector]), config)
+    assert shlex.split(command) == ["uv", "run", "pytest", selector, "-q"]
+
+    with pytest.raises(TaskRejected, match="cannot be parsed"):
+        verify_command(make_task(test_command="pytest \"unclosed"), config)
 
 
 def test_run_verify_captures_output_and_exit_code(tmp_path: Path) -> None:

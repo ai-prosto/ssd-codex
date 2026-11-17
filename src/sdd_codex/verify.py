@@ -39,14 +39,27 @@ class VerifyResult:
 def verify_command(task: Task, verify: VerifyConfig) -> str:
     """BEH-08: the command comes from the task record, never from the config."""
     if task.test_command:
-        return task.test_command
-    if task.verifies:
-        return verify.selector_runner.format(selectors=" ".join(task.verifies))
-    raise TaskRejected(
-        task.id,
-        "task has no '**Test:**' command and no '**Verifies:**' selectors; "
-        "a generic command from the config is never substituted",
-    )
+        command = task.test_command
+    elif task.verifies:
+        # Selectors are quoted so pytest ids with quotes or spaces survive
+        # the no-shell split in run_verify.
+        selectors = " ".join(shlex.quote(selector) for selector in task.verifies)
+        command = verify.selector_runner.format(selectors=selectors)
+    else:
+        raise TaskRejected(
+            task.id,
+            "task has no '**Test:**' command and no '**Verifies:**' selectors; "
+            "a generic command from the config is never substituted",
+        )
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise TaskRejected(
+            task.id, f"verify command cannot be parsed: {command!r} ({exc})"
+        ) from exc
+    if not argv:
+        raise TaskRejected(task.id, "verify command is empty")
+    return command
 
 
 def command_files(task: Task) -> list[str]:
@@ -65,10 +78,13 @@ def command_files(task: Task) -> list[str]:
 
     for selector in task.verifies:
         add(selector.split("::")[0].strip())
-    for token in shlex.split(task.test_command) if task.test_command else []:
+    tokens = shlex.split(task.test_command) if task.test_command else []
+    for index, token in enumerate(tokens):
         part = token.split("::")[0]
         if token.startswith("-") or part.startswith("/"):
             continue
+        if index == 0 and "/" not in part:
+            continue  # bare program name resolved via PATH (python3.11, make)
         if "/" in part or PurePosixPath(part).suffix:
             add(part)
     return files

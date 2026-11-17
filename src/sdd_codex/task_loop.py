@@ -8,8 +8,9 @@ passes. A test that passes at the red step proves nothing — the attempt is
 closed as failed before any coding. The test files are frozen by hash after
 the red run, so a green result can never be obtained by editing the test.
 
-Every step failure closes the attempt, the tree is rolled back, and the
-reason lands in the attempt log. On success the runner commits to the
+Every step failure — including an exception out of the coder agent or any
+step — closes the attempt, the tree is rolled back, and the reason lands
+in the attempt log. On success the runner commits to the
 current branch (D-13) and puts the ``DONE`` mark into ``tasks.md`` within
 the same commit (D-18).
 
@@ -26,12 +27,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sdd_codex.config import Config
+from sdd_codex.errors import GitError
 from sdd_codex.format.status import mark_task_done
 from sdd_codex.format.tasks import Task
 from sdd_codex.freeze import (
     allowed_paths,
     allowed_test_paths,
     check_frozen,
+    reject_escaping_paths,
     rollback,
 )
 from sdd_codex.git import Git
@@ -77,12 +80,27 @@ class AttemptResult:
 
 
 def _hash_files(repo: Path, paths: tuple[str, ...]) -> dict[str, str | None]:
+    """Content hashes of the given paths; a directory contributes every file
+    under it, so a test inside ``tests/`` cannot be edited, added or deleted
+    unnoticed. Bytecode caches are skipped: the verify runs create them."""
     hashes: dict[str, str | None] = {}
+
+    def add_file(key: str, file: Path) -> None:
+        hashes[key] = hashlib.sha256(file.read_bytes()).hexdigest()
+
     for rel in paths:
-        file = repo / rel
-        hashes[rel] = (
-            hashlib.sha256(file.read_bytes()).hexdigest() if file.is_file() else None
-        )
+        target = repo / rel
+        if target.is_dir():
+            for file in sorted(target.rglob("*")):
+                if not file.is_file() or file.suffix == ".pyc":
+                    continue
+                if "__pycache__" in file.parts:
+                    continue
+                add_file(file.relative_to(repo).as_posix(), file)
+        elif target.is_file():
+            add_file(rel, target)
+        else:
+            hashes[rel] = None
     return hashes
 
 
@@ -106,6 +124,7 @@ def run_task_attempt(
     command = verify_command(task, config.verify)
     allowed = allowed_paths(task)
     test_paths = allowed_test_paths(task)
+    reject_escaping_paths(repo, task.id, allowed)
 
     task_dir = Path(task_dir)
     task_dir.mkdir(parents=True, exist_ok=True)
@@ -126,104 +145,125 @@ def run_task_attempt(
         result.step_reached = step
         result.failure_reason = reason
         log.append(f"[{step}] FAIL: {reason}")
-        rollback(git)
-        log.append("[rollback] working tree rolled back")
+        try:
+            rollback(git)
+            log.append("[rollback] working tree rolled back")
+        except GitError as exc:
+            log.append(f"[rollback] FAILED, tree may be dirty: {exc}")
         return finish()
 
     git.ensure_clean()
 
-    # Step 1 — the agent writes the test; only test files may change.
-    result.step_reached = STEP_WRITE_TEST
-    coder(
-        CoderRequest(
-            task=task,
-            step=STEP_WRITE_TEST,
-            attempt=attempt,
-            allowed_files=test_paths,
-            verify_command=command,
+    try:
+        # Step 1 — the agent writes the test; D-11: after every step only
+        # the task's allowed list may differ from HEAD.
+        result.step_reached = STEP_WRITE_TEST
+        coder(
+            CoderRequest(
+                task=task,
+                step=STEP_WRITE_TEST,
+                attempt=attempt,
+                allowed_files=allowed,
+                verify_command=command,
+            )
         )
-    )
-    violations = check_frozen(git.status_porcelain(), test_paths)
-    if violations:
-        return fail(
-            STEP_WRITE_TEST,
-            "non-test files changed while writing the test: "
-            + ", ".join(str(violation) for violation in violations),
-        )
-    log.append("[write_test] ok")
+        violations = check_frozen(git.status_porcelain(), allowed)
+        if violations:
+            return fail(
+                STEP_WRITE_TEST,
+                "files outside the task's list changed while writing the test: "
+                + ", ".join(str(violation) for violation in violations),
+            )
+        log.append("[write_test] ok")
 
-    # Step 2 — the runner itself proves the red run (BEH-09).
-    result.step_reached = STEP_RED
-    red = run_verify(command, repo, config.verify.timeout_sec)
-    red_path = task_dir / f"attempt-{attempt:02d}.red.txt"
-    red_path.write_text(red.output, encoding="utf-8")
-    result.red_output_path = red_path
-    log.append(f"[red] $ {command}")
-    log.append(f"[red] exit {red.returncode}; output saved to {red_path.name}")
-    if red.passed:
-        return fail(
-            STEP_RED,
-            "verify command already passes before any code change; "
-            "a test that is green at the red step proves nothing (BEH-10)",
-        )
-    frozen = _hash_files(repo, test_paths)
-    log.append(f"[red] test files frozen by hash: {', '.join(test_paths) or '-'}")
-
-    # Step 3 — the agent writes code; test files are frozen by hash.
-    result.step_reached = STEP_CODE
-    coder(
-        CoderRequest(
-            task=task,
-            step=STEP_CODE,
-            attempt=attempt,
-            allowed_files=allowed,
-            verify_command=command,
-            red_output=red.output,
-        )
-    )
-    current = _hash_files(repo, test_paths)
-    tampered = sorted(path for path in frozen if frozen[path] != current[path])
-    if tampered:
-        return fail(
-            STEP_CODE,
-            "test files changed after the red run (frozen hash broken): "
-            + ", ".join(tampered),
-        )
-    log.append("[code] ok")
-
-    # Step 4 — the same command string must pass now (BEH-11).
-    result.step_reached = STEP_GREEN
-    green = run_verify(command, repo, config.verify.timeout_sec)
-    log.append(f"[green] $ {command}")
-    log.append(f"[green] exit {green.returncode}")
-    if not green.passed:
-        return fail(
-            STEP_GREEN,
-            f"verify command failed after coding (exit {green.returncode}):\n"
-            f"{green.output}",
+        # Step 2 — the runner itself proves the red run (BEH-09).
+        result.step_reached = STEP_RED
+        red = run_verify(command, repo, config.verify.timeout_sec)
+        red_path = task_dir / f"attempt-{attempt:02d}.red.txt"
+        red_path.write_text(red.output, encoding="utf-8")
+        result.red_output_path = red_path
+        log.append(f"[red] $ {command}")
+        log.append(f"[red] exit {red.returncode}; output saved to {red_path.name}")
+        if red.passed:
+            return fail(
+                STEP_RED,
+                "verify command already passes before any code change; "
+                "a test that is green at the red step proves nothing (BEH-10)",
+            )
+        frozen = _hash_files(repo, test_paths)
+        log.append(
+            f"[red] test files frozen by hash: {', '.join(test_paths) or '-'}"
         )
 
-    # Step 5 — freeze: only the task's listed files may have changed.
-    result.step_reached = STEP_FREEZE
-    violations = check_frozen(git.status_porcelain(), allowed)
-    if violations:
-        return fail(
-            STEP_FREEZE,
-            "files outside the task's list changed: "
-            + ", ".join(str(violation) for violation in violations),
+        # Step 3 — the agent writes code; test files are frozen by hash.
+        result.step_reached = STEP_CODE
+        coder(
+            CoderRequest(
+                task=task,
+                step=STEP_CODE,
+                attempt=attempt,
+                allowed_files=allowed,
+                verify_command=command,
+                red_output=red.output,
+            )
         )
-    log.append("[freeze] only allowed files changed")
+        current = _hash_files(repo, test_paths)
+        tampered = sorted(
+            path
+            for path in frozen.keys() | current.keys()
+            if frozen.get(path) != current.get(path)
+        )
+        if tampered:
+            return fail(
+                STEP_CODE,
+                "test files changed after the red run (frozen hash broken): "
+                + ", ".join(tampered),
+            )
+        log.append("[code] ok")
 
-    # Step 6 — commit to the current branch; the DONE mark joins the commit.
-    result.step_reached = STEP_COMMIT
-    mark_task_done(Path(task.file), task.id)
-    message = config.git.commit_template.format(
-        task_id=task.id, task_name=task.name
-    )
-    commit = git.commit_all(message)
-    result.commit = commit
-    result.accepted = True
-    log.append(
-        f"[commit] {commit[:12]} on branch {git.current_branch()}: {message}"
-    )
-    return finish()
+        # Step 4 — the same command string must pass now (BEH-11).
+        result.step_reached = STEP_GREEN
+        green = run_verify(command, repo, config.verify.timeout_sec)
+        log.append(f"[green] $ {command}")
+        log.append(f"[green] exit {green.returncode}")
+        if not green.passed:
+            return fail(
+                STEP_GREEN,
+                f"verify command failed after coding (exit {green.returncode}):\n"
+                f"{green.output}",
+            )
+
+        # Step 5 — freeze: only the task's listed files may have changed.
+        result.step_reached = STEP_FREEZE
+        violations = check_frozen(git.status_porcelain(), allowed)
+        if violations:
+            return fail(
+                STEP_FREEZE,
+                "files outside the task's list changed: "
+                + ", ".join(str(violation) for violation in violations),
+            )
+        log.append("[freeze] only allowed files changed")
+
+        # Step 6 — commit to the current branch; the DONE mark joins the commit.
+        result.step_reached = STEP_COMMIT
+        tasks_file = Path(task.file)
+        if not tasks_file.is_absolute():
+            tasks_file = repo / tasks_file
+        mark_task_done(tasks_file, task.id)
+        message = config.git.commit_template.format(
+            task_id=task.id, task_name=task.name
+        )
+        commit = git.commit_all(message)
+        result.commit = commit
+        result.accepted = True
+        log.append(
+            f"[commit] {commit[:12]} on branch {git.current_branch()}: {message}"
+        )
+        return finish()
+    except Exception as exc:  # noqa: BLE001 — a crashing step is a failed
+        # attempt with a rolled-back tree, never an escaping exception that
+        # leaves the agent's half-done edits in place (D-09).
+        return fail(
+            result.step_reached or STEP_WRITE_TEST,
+            f"unexpected error: {exc!r}",
+        )

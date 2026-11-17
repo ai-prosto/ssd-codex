@@ -69,6 +69,7 @@ def test_parse_porcelain_handles_renames_and_quoted_paths() -> None:
         " M src/app.py",
         "?? docs/",
         'R  "old name.py" -> new_name.py',
+        '?? "\\320\\244.py"',  # git C-quotes UTF-8 bytes as octal escapes
         "x",  # too short: ignored
     ]
     assert parse_porcelain(lines) == [
@@ -76,6 +77,7 @@ def test_parse_porcelain_handles_renames_and_quoted_paths() -> None:
         Change("??", "docs"),
         Change("R ", "old name.py"),
         Change("R ", "new_name.py"),
+        Change("??", "Ф.py"),
     ]
 
 

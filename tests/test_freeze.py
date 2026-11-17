@@ -74,6 +74,35 @@ def test_extra_changed_file_rejects_attempt_and_rolls_back(
     assert "TODO" in (task_repo.repo / "tasks.md").read_text(encoding="utf-8")
 
 
+def test_rollback_reverts_staged_changes(task_repo) -> None:
+    """A coder that ran ``git add`` must not survive the rollback: staged
+    edits are unstaged and reverted, staged new files removed."""
+    (task_repo.repo / "tasks.md").write_text("evil\n", encoding="utf-8")
+    (task_repo.repo / "new.txt").write_text("new\n", encoding="utf-8")
+    task_repo.git("add", "-A")
+
+    rollback(Git(task_repo.repo))
+
+    assert task_repo.porcelain() == []
+    assert "TODO" in (task_repo.repo / "tasks.md").read_text(encoding="utf-8")
+    assert not (task_repo.repo / "new.txt").exists()
+
+
+def test_symlink_escaping_repo_rejects_task(tmp_path, task_repo) -> None:
+    """D-19: an allowed path that resolves through a symlink to outside the
+    repository rejects the task before any step runs."""
+    from sdd_codex.freeze import reject_escaping_paths
+
+    outside = tmp_path / "outside"
+    outside.mkdir(exist_ok=True)
+    (task_repo.repo / "linked").symlink_to(outside)
+
+    with pytest.raises(TaskRejected, match="outside the repository"):
+        reject_escaping_paths(task_repo.repo, "TASK-042", ("linked/x.py",))
+    # A normal path inside the repo passes.
+    reject_escaping_paths(task_repo.repo, "TASK-042", ("src/out.txt",))
+
+
 def test_rollback_restores_tracked_edits_and_keeps_artifacts(task_repo) -> None:
     gitignore = task_repo.repo / ".gitignore"
     original = gitignore.read_text(encoding="utf-8")

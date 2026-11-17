@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import posixpath
 from dataclasses import dataclass
+from pathlib import Path
 
 from sdd_codex.errors import TaskRejected
 from sdd_codex.format.tasks import Task
@@ -94,5 +95,22 @@ def rollback(git: Git) -> None:
 
     ``.sdd-codex/`` survives — logs and reports of the failed attempt stay.
     """
+    git.unstage_all()
     git.checkout_all()
     git.clean_untracked()
+
+
+def reject_escaping_paths(
+    repo: Path, task_id: str, paths: tuple[str, ...]
+) -> None:
+    """D-19: an allowed path reached through a symlink must stay inside the
+    repository; ``_normalize`` is lexical and cannot see links on disk."""
+    root = repo.resolve()
+    for rel in paths:
+        resolved = (repo / rel).resolve()
+        if not resolved.is_relative_to(root):
+            raise TaskRejected(
+                task_id,
+                f"path {rel!r} resolves outside the repository "
+                f"(to {str(resolved)!r})",
+            )

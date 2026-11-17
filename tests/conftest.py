@@ -37,7 +37,7 @@ Make the demo output file.
 **Checklist:**
 - [ ] produce out.txt
 
-**Touches:** src/out.txt
+**Touches:** src/
 **Test:** {command}
 """
 
@@ -82,6 +82,7 @@ class ScriptedCoder:
     out_content: str = "hello\n"
     tamper_test: bool = False
     extra_file: str | None = None
+    helper_at_write_test: str | None = None
     calls: list[str] = field(default_factory=list)
     requests: list[CoderRequest] = field(default_factory=list)
     events: list[tuple[str, str]] | None = None
@@ -95,6 +96,10 @@ class ScriptedCoder:
             check = self.repo / "tests" / "check.py"
             check.parent.mkdir(parents=True, exist_ok=True)
             check.write_text(self.test_body, encoding="utf-8")
+            if self.helper_at_write_test:
+                helper = self.repo / self.helper_at_write_test
+                helper.parent.mkdir(parents=True, exist_ok=True)
+                helper.write_text("helper\n", encoding="utf-8")
             return
         out = self.repo / "src" / "out.txt"
         out.parent.mkdir(parents=True, exist_ok=True)

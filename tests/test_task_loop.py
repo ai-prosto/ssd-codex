@@ -133,12 +133,12 @@ def test_tampered_test_files_break_the_frozen_hash(task_repo, make_coder) -> Non
     assert task_repo.porcelain() == []
 
 
-def test_non_test_edit_during_write_test_step_fails(task_repo, make_coder) -> None:
-    """D-09: while writing the test only the test files may change."""
+def test_file_outside_allowed_during_write_test_fails(task_repo, make_coder) -> None:
+    """D-11: after the test-writing step, any file outside the task's allowed
+    list is a violation — the attempt closes before the red run."""
 
     def rogue_coder(request) -> None:
-        (task_repo.repo / "src").mkdir(exist_ok=True)
-        (task_repo.repo / "src" / "out.txt").write_text("early\n", encoding="utf-8")
+        (task_repo.repo / "rogue.txt").write_text("early\n", encoding="utf-8")
 
     result = run_task_attempt(
         task_repo.task, task_repo.config, task_repo.repo, rogue_coder, task_repo.task_dir
@@ -146,8 +146,100 @@ def test_non_test_edit_during_write_test_step_fails(task_repo, make_coder) -> No
 
     assert not result.accepted
     assert result.step_reached == task_loop.STEP_WRITE_TEST
-    assert "src/out.txt" in result.failure_reason
+    assert "rogue.txt" in result.failure_reason
     assert task_repo.porcelain() == []
+
+
+def test_write_test_step_may_touch_any_allowed_file(task_repo, make_coder) -> None:
+    """D-11: the per-step check uses the task's full allowed list, so a task
+    whose verify command names no files (``make check`` style) stays runnable;
+    a helper written inside ``**Touches:**`` at the test step is no violation."""
+    coder = make_coder(helper_at_write_test="src/helper.txt")
+
+    result = run_task_attempt(
+        task_repo.task, task_repo.config, task_repo.repo, coder, task_repo.task_dir
+    )
+
+    assert result.accepted
+    committed = task_repo.git("show", "--name-only", "--format=", "HEAD").split()
+    assert "src/helper.txt" in committed
+
+
+def test_coder_exception_closes_attempt_with_rollback(task_repo, make_coder) -> None:
+    """A crashing coder agent (the realistic failure of the real Codex CLI)
+    is a failed attempt: tree rolled back, reason logged, nothing raised."""
+    base = make_coder()
+
+    def crashing(request) -> None:
+        base(request)
+        if request.step == task_loop.STEP_CODE:
+            raise RuntimeError("codex exploded")
+
+    result = run_task_attempt(
+        task_repo.task, task_repo.config, task_repo.repo, crashing, task_repo.task_dir
+    )
+
+    assert not result.accepted
+    assert result.step_reached == STEP_CODE
+    assert "codex exploded" in result.failure_reason
+    assert task_repo.commit_count() == 1
+    assert task_repo.porcelain() == []  # no half-done edits left behind
+    log = (task_repo.task_dir / "attempt-01.log").read_text(encoding="utf-8")
+    assert "codex exploded" in log
+    assert "rolled back" in log
+
+
+def test_hash_freeze_covers_directory_contents(tmp_path: Path) -> None:
+    """D-09: when a frozen path is a directory, every file under it is part
+    of the hash — editing, adding or deleting a test inside it is detected."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text("a\n", encoding="utf-8")
+    (tests_dir / "__pycache__").mkdir()
+    (tests_dir / "__pycache__" / "test_a.pyc").write_bytes(b"cache")
+
+    frozen = task_loop._hash_files(tmp_path, ("tests",))
+    assert set(frozen) == {"tests/test_a.py"}  # caches are not part of the hash
+
+    (tests_dir / "test_a.py").write_text("b\n", encoding="utf-8")
+    assert task_loop._hash_files(tmp_path, ("tests",)) != frozen
+
+    (tests_dir / "test_a.py").write_text("a\n", encoding="utf-8")
+    (tests_dir / "test_new.py").write_text("sneaky\n", encoding="utf-8")
+    assert set(task_loop._hash_files(tmp_path, ("tests",))) > set(frozen)
+
+
+def test_artifacts_inside_repo_stay_out_of_the_commit(task_repo, make_coder) -> None:
+    """``.sdd-codex/`` inside the repository is never staged, even when it is
+    not gitignored, and the attempt artifacts survive the successful commit."""
+    (task_repo.repo / ".gitignore").write_text("", encoding="utf-8")
+    task_repo.git("commit", "-aqm", "drop ignore rules")
+    task_dir = task_repo.repo / ".sdd-codex" / "TASK-101"
+
+    result = run_task_attempt(
+        task_repo.task, task_repo.config, task_repo.repo, make_coder(), task_dir
+    )
+
+    assert result.accepted
+    committed = task_repo.git("show", "--name-only", "--format=", "HEAD").split()
+    assert not any(path.startswith(".sdd-codex") for path in committed)
+    assert (task_dir / "attempt-01.red.txt").is_file()
+    assert (task_dir / "attempt-01.log").is_file()
+
+
+def test_relative_tasks_file_resolves_against_repo(task_repo, make_coder) -> None:
+    """``task.file`` may be repo-relative; the DONE mark must land in the
+    repo's tasks.md, not in a file relative to the process cwd."""
+    from dataclasses import replace
+
+    task = replace(task_repo.task, file="tasks.md")
+
+    result = run_task_attempt(
+        task, task_repo.config, task_repo.repo, make_coder(), task_repo.task_dir
+    )
+
+    assert result.accepted
+    assert "P2 | DONE" in (task_repo.repo / "tasks.md").read_text(encoding="utf-8")
 
 
 def test_dirty_tree_before_start_is_refused(task_repo, make_coder) -> None:

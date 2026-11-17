@@ -124,6 +124,12 @@ class Git:
     def diff_head(self) -> str:
         return self._run("diff", "HEAD")
 
+    def unstage_all(self) -> None:
+        """Reset the index to HEAD; without this a staged edit survives
+        ``checkout -- .`` (which restores from the index) and ``clean``
+        (which skips staged files)."""
+        self._run("reset", "--quiet", "HEAD", "--", ".")
+
     def checkout_all(self) -> None:
         """Restore every tracked file to HEAD."""
         self._run("checkout", "--quiet", "--", ".")
