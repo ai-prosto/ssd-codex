@@ -67,7 +67,7 @@ Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/3
 
 
 ### TASK-005: Оркестрация прогона: остановка, бюджет, прогресс, артефакты
-P2 | TODO   Est: 0.5d
+P2 | 🔄 IN_PROGRESS   Est: 0.5d
 
 Реализовать сценарии BEH-18, BEH-19, BEH-20, BEH-21, BEH-22, BEH-23, BEH-24, BEH-25 (DT-05, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-05
