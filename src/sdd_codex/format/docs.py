@@ -24,6 +24,37 @@ from sdd_codex.errors import SpecIssue
 
 BLOCK_HEADING_RE = re.compile(r"^(#{1,6})\s+((?:REQ|NFR|DESIGN)-\d+)(?::\s*(.*?))?\s*$")
 REF_RE = re.compile(r"\b((?:REQ|NFR|DESIGN|TASK)-\d+)\b")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+
+
+class FenceTracker:
+    """Tracks fenced code blocks across lines.
+
+    A fence opens with three or more backticks or tildes and closes only with
+    a line of at least as many of the same character and no trailing text, so
+    a 3-backtick example inside a 4-backtick fence stays fenced.
+    """
+
+    def __init__(self) -> None:
+        self._open: tuple[str, int] | None = None  # (fence char, run length)
+
+    def fenced(self, line: str) -> bool:
+        """Consume ``line``; True if it is a fence delimiter or fenced content."""
+        match = FENCE_RE.match(line)
+        if self._open is None:
+            if match:
+                self._open = (match.group(1)[0], len(match.group(1)))
+                return True
+            return False
+        if match:
+            char, length = match.group(1)[0], len(match.group(1))
+            if (
+                char == self._open[0]
+                and length >= self._open[1]
+                and not match.group(2).strip()
+            ):
+                self._open = None
+        return True
 
 
 @dataclass
@@ -98,7 +129,7 @@ def parse_doc(text: str, file: str | Path) -> SpecDoc:
     lines = body.splitlines()
     open_block: DocBlock | None = None
     block_lines: list[str] = []
-    in_fence = False
+    fences = FenceTracker()
 
     def close_block() -> None:
         nonlocal open_block, block_lines
@@ -109,8 +140,7 @@ def parse_doc(text: str, file: str | Path) -> SpecDoc:
 
     for offset, line in enumerate(lines):
         line_no = start_line + offset
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
+        in_fence = fences.fenced(line)
         heading = None if in_fence else BLOCK_HEADING_RE.match(line)
         if heading:
             level = len(heading.group(1))
@@ -132,6 +162,15 @@ def parse_doc(text: str, file: str | Path) -> SpecDoc:
                 blocks[block_id] = open_block
                 block_lines = [line]
                 continue
+            issues.append(
+                SpecIssue(
+                    file,
+                    line_no,
+                    None,
+                    f"id heading {block_id} is nested deeper than open block "
+                    f"{open_block.id} and does not start a block",
+                )
+            )
         elif (
             not in_fence
             and open_block is not None

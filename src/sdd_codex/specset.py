@@ -64,19 +64,29 @@ def _load(spec_dir: Path) -> tuple[SpecSet | None, list[SpecIssue]]:
         if not path.is_file():
             issues.append(SpecIssue(str(path), None, None, "file not found"))
             continue
-        texts[name] = path.read_text(encoding="utf-8")
-    if issues:
+        try:
+            texts[name] = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            issues.append(SpecIssue(str(path), None, None, f"cannot read file: {exc}"))
+
+    # Parse whatever is readable, so one missing file does not hide the
+    # issues of the others — everything is still reported in a single pass.
+    requirements: SpecDoc | None = None
+    design: SpecDoc | None = None
+    tasks: TaskDocument | None = None
+    if REQUIREMENTS_FILE in texts:
+        requirements = parse_doc(texts[REQUIREMENTS_FILE], spec_dir / REQUIREMENTS_FILE)
+        issues.extend(requirements.issues)
+    if DESIGN_FILE in texts:
+        design = parse_doc(texts[DESIGN_FILE], spec_dir / DESIGN_FILE)
+        issues.extend(design.issues)
+    if TASKS_FILE in texts:
+        tasks = parse_tasks(texts[TASKS_FILE], spec_dir / TASKS_FILE)
+        issues.extend(tasks.issues)
+        issues.extend(validate_dependencies(tasks))
+
+    if requirements is None or design is None or tasks is None:
         return None, issues
-
-    requirements = parse_doc(texts[REQUIREMENTS_FILE], spec_dir / REQUIREMENTS_FILE)
-    design = parse_doc(texts[DESIGN_FILE], spec_dir / DESIGN_FILE)
-    tasks = parse_tasks(texts[TASKS_FILE], spec_dir / TASKS_FILE)
-
-    issues.extend(requirements.issues)
-    issues.extend(design.issues)
-    issues.extend(tasks.issues)
-    issues.extend(validate_dependencies(tasks))
-
     spec_set = SpecSet(
         spec_dir=spec_dir, requirements=requirements, design=design, tasks=tasks
     )

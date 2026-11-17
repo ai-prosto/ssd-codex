@@ -25,8 +25,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from sdd_codex.errors import SpecIssue
-from sdd_codex.format.docs import split_frontmatter
+from sdd_codex.format.docs import FenceTracker, split_frontmatter
 
 TASK_HEADER_RE = re.compile(r"^### (TASK-\d+):\s+(\S.*?)\s*$")
 TASK_HEADER_LOOSE_RE = re.compile(r"^###\s*(TASK[^\s:]*)")
@@ -36,9 +38,10 @@ META_RE = re.compile(
     r"\s*(?:(?P<status_emoji>[^\w\s|]+)\s*)?(?P<status>[A-Za-z_]+)"
     r"(?:\s+Est:\s*(?P<estimate>\S+))?\s*$"
 )
-CHECKLIST_RE = re.compile(r"^- \[([ x])\] (.+)$")
+CHECKLIST_RE = re.compile(r"^- \[([ xX])\] (.+)$")
 FIELD_RE = re.compile(r"^\*\*([A-Za-z][A-Za-z -]*?):\*\*\s*(.*?)\s*$")
 BRACKET_REF_RE = re.compile(r"\[([A-Z][A-Z0-9]*-\d+)\]")
+BARE_REF_RE = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
 BULLET_RE = re.compile(r"^- (?!\[)(\S.*?)\s*$")
 
 VALID_STATUSES = {"todo", "in_progress", "review", "done", "blocked"}
@@ -101,14 +104,17 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
 
     frontmatter: dict[str, Any] | None = None
     if frontmatter_text is not None:
-        import yaml
-
         try:
             loaded = yaml.safe_load(frontmatter_text)
         except yaml.YAMLError as exc:
             issues.append(SpecIssue(file, 1, None, f"invalid YAML frontmatter: {exc}"))
         else:
-            frontmatter = loaded if isinstance(loaded, dict) else {}
+            if loaded is None or isinstance(loaded, dict):
+                frontmatter = loaded or {}
+            else:
+                issues.append(
+                    SpecIssue(file, 1, None, "frontmatter must be a YAML mapping")
+                )
 
     tasks: list[Task] = []
     seen_ids: dict[str, int] = {}
@@ -116,7 +122,9 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
     current: Task | None = None
     description_lines: list[str] = []
     seen_structured_field = False
+    seen_meta = False
     pending_list_field: str | None = None
+    fences = FenceTracker()
 
     def flush_description() -> None:
         nonlocal description_lines
@@ -127,6 +135,15 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
     for offset, line in enumerate(body.splitlines()):
         line_no = start_line + offset
         stripped = line.rstrip()
+
+        if fences.fenced(line):
+            # Fenced content is plain text: never a header, field or item.
+            if current is not None:
+                if seen_structured_field or current.checklist:
+                    current.extra_lines.append(line)
+                else:
+                    description_lines.append(line)
+            continue
 
         header = TASK_HEADER_RE.match(stripped)
         if header:
@@ -153,6 +170,7 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
             )
             tasks.append(current)
             seen_structured_field = False
+            seen_meta = False
             pending_list_field = None
             continue
 
@@ -161,7 +179,9 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
             # A line that clearly tries to be a task header but does not
             # match the required ``### TASK-NNN: name`` shape.
             flush_description()
-            task_id = loose.group(1) if re.fullmatch(r"TASK-\d+", loose.group(1)) else None
+            task_id = (
+                loose.group(1) if re.fullmatch(r"TASK-\d+", loose.group(1)) else None
+            )
             issues.append(
                 SpecIssue(
                     file,
@@ -195,12 +215,20 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
                 pending_list_field = None
 
         meta = META_RE.match(stripped)
-        if meta and not seen_structured_field and not current.checklist:
+        if (
+            meta
+            and not seen_meta
+            and not seen_structured_field
+            and not current.checklist
+        ):
+            seen_meta = True
             priority = meta.group("priority").lower()
             status = meta.group("status").lower()
             if priority not in VALID_PRIORITIES:
                 issues.append(
-                    SpecIssue(file, line_no, current.id, f"invalid priority {priority!r}")
+                    SpecIssue(
+                        file, line_no, current.id, f"invalid priority {priority!r}"
+                    )
                 )
             if status not in VALID_STATUSES:
                 issues.append(
@@ -215,7 +243,7 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
         if checklist:
             flush_description()
             current.checklist.append(
-                ChecklistItem(text=checklist.group(2), done=checklist.group(1) == "x")
+                ChecklistItem(text=checklist.group(2), done=checklist.group(1) != " ")
             )
             continue
 
@@ -227,8 +255,21 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
             value = fld.group(2)
             if name in _REF_FIELDS:
                 setattr(current, _REF_FIELDS[name], BRACKET_REF_RE.findall(value))
+                for bare in BARE_REF_RE.findall(BRACKET_REF_RE.sub("", value)):
+                    issues.append(
+                        SpecIssue(
+                            file,
+                            line_no,
+                            current.id,
+                            f'reference {bare} in "{fld.group(1).strip()}" '
+                            f"must be bracketed: [{bare}]",
+                        )
+                    )
             elif name == "touches":
-                current.touches = _split_csv(value)
+                if value:
+                    current.touches = _split_csv(value)
+                else:
+                    pending_list_field = "touches"
             elif name == "verifies":
                 if value:
                     current.verifies = _split_csv(value)
@@ -277,40 +318,51 @@ def validate_dependencies(doc: TaskDocument) -> list[SpecIssue]:
 
 
 def _find_cycles(doc: TaskDocument) -> list[SpecIssue]:
+    # Iterative DFS: a recursive walk would hit the recursion limit on long
+    # dependency chains.
     by_id = {task.id: task for task in doc.tasks}
     state: dict[str, int] = {}  # 0 unvisited / 1 in stack / 2 done
     stack: list[str] = []
     issues: list[SpecIssue] = []
     reported: set[frozenset[str]] = set()
 
-    def visit(task_id: str) -> None:
-        state[task_id] = 1
-        stack.append(task_id)
-        for dep in by_id[task_id].depends_on:
-            if dep not in by_id:
-                continue
-            if state.get(dep, 0) == 0:
-                visit(dep)
-            elif state.get(dep) == 1:
-                cycle = stack[stack.index(dep) :] + [dep]
-                key = frozenset(cycle)
-                if key not in reported:
-                    reported.add(key)
-                    task = by_id[task_id]
-                    issues.append(
-                        SpecIssue(
-                            doc.file,
-                            task.line,
-                            task.id,
-                            "dependency cycle: " + " -> ".join(cycle),
+    for root in doc.tasks:
+        if state.get(root.id, 0) != 0:
+            continue
+        state[root.id] = 1
+        stack.append(root.id)
+        work = [(root.id, iter(by_id[root.id].depends_on))]
+        while work:
+            task_id, deps = work[-1]
+            descended = False
+            for dep in deps:
+                if dep not in by_id:
+                    continue
+                dep_state = state.get(dep, 0)
+                if dep_state == 0:
+                    state[dep] = 1
+                    stack.append(dep)
+                    work.append((dep, iter(by_id[dep].depends_on)))
+                    descended = True
+                    break
+                if dep_state == 1:
+                    cycle = stack[stack.index(dep) :] + [dep]
+                    key = frozenset(cycle)
+                    if key not in reported:
+                        reported.add(key)
+                        task = by_id[task_id]
+                        issues.append(
+                            SpecIssue(
+                                doc.file,
+                                task.line,
+                                task.id,
+                                "dependency cycle: " + " -> ".join(cycle),
+                            )
                         )
-                    )
-        stack.pop()
-        state[task_id] = 2
-
-    for task in doc.tasks:
-        if state.get(task.id, 0) == 0:
-            visit(task.id)
+            if not descended:
+                work.pop()
+                stack.pop()
+                state[task_id] = 2
     return issues
 
 
@@ -322,8 +374,7 @@ def execution_order(doc: TaskDocument) -> list[Task]:
     """
     by_id = {task.id: task for task in doc.tasks}
     remaining_deps = {
-        task.id: {dep for dep in task.depends_on if dep in by_id}
-        for task in doc.tasks
+        task.id: {dep for dep in task.depends_on if dep in by_id} for task in doc.tasks
     }
     ordered: list[Task] = []
     done: set[str] = set()

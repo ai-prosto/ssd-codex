@@ -97,7 +97,11 @@ def load_config(path: str | Path) -> Config:
     if not path.is_file():
         raise ConfigError(f"config file not found: {path}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(f"{path}: cannot read file: {exc}") from exc
+    try:
+        data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise ConfigError(f"{path}: invalid YAML: {exc}") from exc
     if data is None:
@@ -194,7 +198,7 @@ class _Section:
             value = {}
         if not isinstance(value, dict):
             raise ConfigError(
-                f"{self._source}: key \"{self._path(key)}\" must be a mapping"
+                f'{self._source}: key "{self._path(key)}" must be a mapping'
             )
         return _Section(value, self._source, prefix=f"{self._path(key)}.")
 
@@ -204,7 +208,7 @@ class _Section:
             return default
         if not isinstance(value, str):
             raise ConfigError(
-                f"{self._source}: key \"{self._path(key)}\" must be a string"
+                f'{self._source}: key "{self._path(key)}" must be a string'
             )
         return value
 
@@ -214,7 +218,7 @@ class _Section:
             return default
         if not isinstance(value, int) or isinstance(value, bool):
             raise ConfigError(
-                f"{self._source}: key \"{self._path(key)}\" must be an integer"
+                f'{self._source}: key "{self._path(key)}" must be an integer'
             )
         return value
 
@@ -224,7 +228,7 @@ class _Section:
             return None
         if not isinstance(value, int) or isinstance(value, bool):
             raise ConfigError(
-                f"{self._source}: key \"{self._path(key)}\" must be an integer or null"
+                f'{self._source}: key "{self._path(key)}" must be an integer or null'
             )
         return value
 
@@ -234,7 +238,7 @@ class _Section:
             return None
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ConfigError(
-                f"{self._source}: key \"{self._path(key)}\" must be a number or null"
+                f'{self._source}: key "{self._path(key)}" must be a number or null'
             )
         return float(value)
 
@@ -246,7 +250,7 @@ class _Section:
             isinstance(item, str) for item in value
         ):
             raise ConfigError(
-                f"{self._source}: key \"{self._path(key)}\" must be a list of strings"
+                f'{self._source}: key "{self._path(key)}" must be a list of strings'
             )
         return value
 
@@ -256,20 +260,20 @@ class _Section:
             return {}
         if not isinstance(value, dict):
             raise ConfigError(
-                f"{self._source}: key \"{self._path(key)}\" must be a mapping"
+                f'{self._source}: key "{self._path(key)}" must be a mapping'
             )
         prices: dict[str, dict[str, float]] = {}
         for model, price in value.items():
             if (
                 not isinstance(price, dict)
-                or set(price) - {"input", "output"}
+                or set(price) != {"input", "output"}
                 or not all(
                     isinstance(amount, (int, float)) and not isinstance(amount, bool)
                     for amount in price.values()
                 )
             ):
                 raise ConfigError(
-                    f"{self._source}: key \"{self._path(key)}.{model}\" must be a "
+                    f'{self._source}: key "{self._path(key)}.{model}" must be a '
                     'mapping with numeric "input" and "output"'
                 )
             prices[str(model)] = {name: float(amount) for name, amount in price.items()}

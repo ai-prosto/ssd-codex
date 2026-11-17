@@ -143,6 +143,18 @@ def test_config_file_and_value_errors(tmp_path: Path) -> None:
             write_config(tmp_path, "budget:\n  prices_per_mtok:\n    m: {bad: 1}\n")
         )
 
+    # Both "input" and "output" are required, not just no-extra-keys.
+    with pytest.raises(ConfigError, match='"budget.prices_per_mtok.m"'):
+        load_config(
+            write_config(tmp_path, "budget:\n  prices_per_mtok:\n    m: {input: 1}\n")
+        )
+
+    # A file that cannot be decoded is a ConfigError, not a traceback.
+    bad = tmp_path / "sdd-codex.config.yaml"
+    bad.write_bytes(b"\xff\xfe broken \xff")
+    with pytest.raises(ConfigError, match="cannot read file"):
+        load_config(bad)
+
     config = load_config(write_config(tmp_path, "{}\n"))
     with pytest.raises(ConfigError, match="unknown agent role"):
         config.openai.models.for_role("janitor")
