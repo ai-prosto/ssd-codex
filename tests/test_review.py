@@ -86,9 +86,10 @@ def test_reviewer_is_separate_automatic_agent(task_repo, make_coder, no_human) -
     request = reviewer.requests[0]
     # Its own role model from the config, not the coder's.
     assert request.model == "reviewer-model"
-    # The reviewer sees the diff against HEAD, the task record and both
-    # test outputs...
+    # The reviewer sees the repo, the diff against HEAD, the task record
+    # and both test outputs...
     assert request.task.id == task_repo.task.id
+    assert request.repo == task_repo.repo
     assert "src/out.txt" in request.diff and "+hello" in request.diff
     assert "missing or wrong src/out.txt" in request.red_output
     assert "ok" in request.green_output
@@ -98,6 +99,7 @@ def test_reviewer_is_separate_automatic_agent(task_repo, make_coder, no_human) -
         "task",
         "attempt",
         "model",
+        "repo",
         "diff",
         "red_output",
         "green_output",
@@ -264,6 +266,7 @@ def _request(model: str = "reviewer-model") -> ReviewRequest:
         task=task,
         attempt=1,
         model=model,
+        repo=Path("/work/repo"),
         diff="diff --git a/x b/x",
         red_output="red out",
         green_output="green out",
@@ -282,12 +285,13 @@ def test_codex_cli_reviewer_spawns_fresh_exec_with_reviewer_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The default reviewer runs ``codex exec`` — a fresh thread per call —
-    with the reviewer-role model, and returns the raw stdout."""
-    commands: list[list[str]] = []
+    in the repo, with the reviewer-role model, the prompt on stdin (a diff
+    as an argv element would hit the OS argument-size limit), and returns
+    the raw stdout."""
+    calls: list[tuple[list[str], dict]] = []
 
     def fake_run(command, **kwargs):
-        commands.append(command)
-        assert kwargs["stdin"] is subprocess.DEVNULL
+        calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, stdout=COMMIT_REPLY, stderr="")
 
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -296,10 +300,13 @@ def test_codex_cli_reviewer_spawns_fresh_exec_with_reviewer_model(
     reply = CodexCliReviewer(reasoning_effort="high")(_request())
 
     assert reply == COMMIT_REPLY
-    (command,) = commands
-    assert command[:4] == ["codex", "exec", "--model", "reviewer-model"]
+    ((command, kwargs),) = calls
+    assert command[:4] == ["codex", "exec", "--cd", "/work/repo"]
+    assert command[4:6] == ["--model", "reviewer-model"]
     assert "model_reasoning_effort=high" in command
-    assert "TASK-101: Demo task" in command[-1]  # the prompt goes as an argument
+    assert command[-1] == "-"  # the prompt comes through stdin, not argv
+    assert "TASK-101: Demo task" in kwargs["input"]
+    assert "diff --git a/x b/x" in kwargs["input"]
 
 
 def test_codex_cli_reviewer_failures_raise_review_error(

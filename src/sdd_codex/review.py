@@ -48,6 +48,7 @@ class ReviewRequest:
     task: Task
     attempt: int
     model: str
+    repo: Path
     diff: str
     red_output: str
     green_output: str
@@ -170,6 +171,7 @@ def run_review(
         task=task,
         attempt=attempt,
         model=model,
+        repo=git.repo,
         diff=git.diff_head_with_untracked(),
         red_output=red_output,
         green_output=green_output,
@@ -201,19 +203,25 @@ class CodexCliReviewer:
         command = [
             CODEX_BINARY,
             "exec",
+            "--cd",
+            str(request.repo),
             "--model",
             request.model,
             "-c",
             f"model_reasoning_effort={self.reasoning_effort}",
-            reviewer_prompt(request),
+            # "-" reads the prompt from stdin: the prompt embeds the whole
+            # diff, which as an argv element would hit the OS argument-size
+            # limit and show up in the process list.
+            "-",
         ]
         try:
             result = subprocess.run(
                 command,
                 check=False,
-                stdin=subprocess.DEVNULL,
+                input=reviewer_prompt(request),
                 capture_output=True,
                 encoding="utf-8",
+                errors="replace",
                 timeout=self.timeout_sec,
             )
         except subprocess.TimeoutExpired as exc:
