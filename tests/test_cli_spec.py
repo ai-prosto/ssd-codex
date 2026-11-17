@@ -210,7 +210,7 @@ def test_spec_command_does_not_execute_tasks(
     assert status == ["?? spec/"]
 
 
-def test_run_subcommand_parses_set_but_refuses_execution(
+def test_run_subcommand_refusals_name_the_problem(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -218,8 +218,9 @@ def test_run_subcommand_parses_set_but_refuses_execution(
     monkeypatch.chdir(tmp_path)
     assert cli.main(["spec", "a greeting tool"], planner=StubPlanner()) == 0
 
+    # A parseable set outside a git work tree is a refusal (D-13).
     assert cli.main(["run"]) == 1
-    assert "not implemented" in capsys.readouterr().err
+    assert "git work tree" in capsys.readouterr().err
 
     # A missing set is a refusal naming the file, never a planning attempt.
     (tmp_path / "spec" / "tasks.md").unlink()

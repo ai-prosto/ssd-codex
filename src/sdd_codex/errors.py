@@ -59,6 +59,14 @@ class PlannerError(Exception):
     """The planner agent failed or returned unusable output."""
 
 
+class CoderError(Exception):
+    """The coder agent process failed to run at all.
+
+    Raised out of the agent callable and caught by the task loop: a crashed
+    coder closes the attempt like any other failed step (D-09).
+    """
+
+
 class ReviewError(Exception):
     """The reviewer agent failed to run at all.
 
