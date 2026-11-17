@@ -1,0 +1,23 @@
+[project]
+name = "sdd-codex"
+version = "0.1.0"
+description = "Spec-driven task runner: parses spec-runner markdown sets and executes tasks via Codex CLI agents"
+readme = "README.md"
+authors = [
+    { name = "ai-prosto", email = "ai@pr0sto.xyz" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.5",
+]
