@@ -64,6 +64,33 @@ def test_ensure_clean_and_status_helpers(task_repo) -> None:
     git.ensure_clean()
 
 
+def test_diff_head_with_untracked_shows_new_files_but_not_artifacts(
+    task_repo,
+) -> None:
+    """The review diff includes files the coder created (a plain ``diff
+    HEAD`` would hide them) but never the ``.sdd-codex/`` artifacts, even
+    when the artifacts directory is not gitignored."""
+    git = Git(task_repo.repo)
+    # Make artifacts NOT gitignored, committed so the diff below is clean.
+    (task_repo.repo / ".gitignore").unlink()
+    task_repo.git("commit", "-q", "-am", "drop gitignore")
+    new = task_repo.repo / "src" / "new.txt"
+    new.parent.mkdir()
+    new.write_text("created\n", encoding="utf-8")
+    artifact = task_repo.repo / ".sdd-codex" / "attempt-01.log"
+    artifact.parent.mkdir()
+    artifact.write_text("runner state\n", encoding="utf-8")
+
+    diff = git.diff_head_with_untracked()
+
+    assert "src/new.txt" in diff and "+created" in diff
+    assert ".sdd-codex" not in diff
+    # The intent-to-add registration must not drag artifacts into a commit.
+    git.commit_all("add new file")
+    assert "src/new.txt" in task_repo.git("show", "--stat", "HEAD")
+    assert ".sdd-codex" not in task_repo.git("show", "--stat", "HEAD")
+
+
 def test_parse_porcelain_handles_renames_and_quoted_paths() -> None:
     lines = [
         " M src/app.py",

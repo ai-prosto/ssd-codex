@@ -59,6 +59,15 @@ class PlannerError(Exception):
     """The planner agent failed or returned unusable output."""
 
 
+class ReviewError(Exception):
+    """The reviewer agent failed to run at all.
+
+    An *unrecognised reply* is not an error — it parses into a ``block``
+    verdict (BEH-17); this exception is for the agent process itself
+    failing, which closes the attempt like any other crashed step.
+    """
+
+
 class CliError(Exception):
     """A command refused to run; carries the process exit code."""
 

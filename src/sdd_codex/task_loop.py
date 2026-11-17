@@ -10,19 +10,22 @@ the red run, so a green result can never be obtained by editing the test.
 
 Every step failure — including an exception out of the coder agent or any
 step — closes the attempt, the tree is rolled back, and the reason lands
-in the attempt log. On success the runner commits to the
-current branch (D-13) and puts the ``DONE`` mark into ``tasks.md`` within
-the same commit (D-18).
+in the attempt log. Before the commit a separate reviewer agent judges the
+diff (D-12, see :mod:`sdd_codex.review`): only its ``commit`` verdict opens
+the path to the commit, ``block`` or an unrecognised reply closes the
+attempt and carries the comments into the next attempt's prompt. On success
+the runner commits to the current branch (D-13) and puts the ``DONE`` mark
+into ``tasks.md`` within the same commit (D-18).
 
 The coder agent is injectable: any callable taking a :class:`CoderRequest`
 and editing the working tree. The real Codex CLI agent arrives with the
-review/orchestration tasks; tests substitute a scripted fake.
+orchestration task; tests substitute a scripted fake.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +41,7 @@ from sdd_codex.freeze import (
     rollback,
 )
 from sdd_codex.git import Git
+from sdd_codex.review import ReviewerAgent, review_path, run_review
 from sdd_codex.verify import run_verify, verify_command
 
 STEP_WRITE_TEST = "write_test"
@@ -45,6 +49,7 @@ STEP_RED = "red"
 STEP_CODE = "code"
 STEP_GREEN = "green"
 STEP_FREEZE = "freeze"
+STEP_REVIEW = "review"
 STEP_COMMIT = "commit"
 
 
@@ -58,6 +63,9 @@ class CoderRequest:
     allowed_files: tuple[str, ...]
     verify_command: str
     red_output: str = ""
+    # BEH-17: the review comments of the previous blocked attempt, so the
+    # coder sees what the reviewer objected to.
+    review_comments: tuple[str, ...] = ()
 
 
 CoderAgent = Callable[[CoderRequest], None]
@@ -75,6 +83,9 @@ class AttemptResult:
     step_reached: str = ""
     failure_reason: str = ""
     red_output_path: Path | None = None
+    review_path: Path | None = None
+    review_verdict: str = ""
+    review_comments: tuple[str, ...] = ()
     commit: str = ""
     log_lines: list[str] = field(default_factory=list)
 
@@ -111,8 +122,15 @@ def run_task_attempt(
     coder: CoderAgent,
     task_dir: str | Path,
     attempt: int = 1,
+    reviewer: ReviewerAgent | None = None,
+    review_comments: Sequence[str] = (),
 ) -> AttemptResult:
     """Run one attempt of ``task``; never raises on a *failed* attempt.
+
+    ``reviewer`` is the automatic review gate before the commit (BEH-16);
+    the orchestrator always wires one, ``None`` skips the gate for
+    lower-level tests. ``review_comments`` are the comments of the previous
+    blocked attempt; they travel into every coder prompt of this attempt.
 
     Raises :class:`~sdd_codex.errors.TaskRejected` when the task record
     itself is unusable (no verify command, no file list) and
@@ -133,9 +151,15 @@ def run_task_attempt(
         task_id=task.id, number=attempt, verify_command=command, log_path=log_path
     )
     log = result.log_lines
+    prior_comments = tuple(review_comments)
     log.append(f"task {task.id} attempt {attempt:02d}")
     log.append(f"verify command: {command}")
     log.append(f"allowed files: {', '.join(allowed)}")
+    if prior_comments:
+        log.append(
+            "review comments from the previous attempt: "
+            + "; ".join(prior_comments)
+        )
 
     def finish() -> AttemptResult:
         log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
@@ -165,6 +189,7 @@ def run_task_attempt(
                 attempt=attempt,
                 allowed_files=allowed,
                 verify_command=command,
+                review_comments=prior_comments,
             )
         )
         violations = check_frozen(git.status_porcelain(), allowed)
@@ -205,6 +230,7 @@ def run_task_attempt(
                 allowed_files=allowed,
                 verify_command=command,
                 red_output=red.output,
+                review_comments=prior_comments,
             )
         )
         current = _hash_files(repo, test_paths)
@@ -244,7 +270,38 @@ def run_task_attempt(
             )
         log.append("[freeze] only allowed files changed")
 
-        # Step 6 — commit to the current branch; the DONE mark joins the commit.
+        # Step 6 — the review gate (D-12): a separate reviewer agent, on its
+        # own model, judges the diff automatically; no human is asked and
+        # only its "commit" verdict opens the path to the commit (BEH-16).
+        if reviewer is not None:
+            result.step_reached = STEP_REVIEW
+            verdict = run_review(
+                task=task,
+                attempt=attempt,
+                model=config.openai.models.for_role("reviewer"),
+                git=git,
+                reviewer=reviewer,
+                task_dir=task_dir,
+                red_output=red.output,
+                green_output=green.output,
+            )
+            result.review_path = review_path(task_dir, attempt)
+            result.review_verdict = verdict.verdict
+            result.review_comments = verdict.comments
+            log.append(
+                f"[review] verdict {verdict.verdict!r} "
+                f"saved to {result.review_path.name}"
+            )
+            if not verdict.approved:
+                # BEH-17: a blocked attempt closes without a commit and
+                # counts as a retry exactly like a failed test.
+                return fail(
+                    STEP_REVIEW,
+                    "reviewer verdict 'block': "
+                    + ("; ".join(verdict.comments) or "no comments"),
+                )
+
+        # Step 7 — commit to the current branch; the DONE mark joins the commit.
         result.step_reached = STEP_COMMIT
         tasks_file = Path(task.file)
         if not tasks_file.is_absolute():
