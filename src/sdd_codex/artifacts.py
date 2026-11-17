@@ -17,7 +17,6 @@ agent or a verify command happened to echo it.
 from __future__ import annotations
 
 import json
-import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -25,26 +24,19 @@ from pathlib import Path
 from sdd_codex.errors import TaskRejected
 from sdd_codex.format.tasks import Task
 from sdd_codex.freeze import allowed_paths
+from sdd_codex.masking import MASK, mask_secret_bytes, mask_secrets
 from sdd_codex.task_loop import AttemptResult
+
+__all__ = [
+    "MASK",
+    "RunArtifacts",
+    "mask_secrets",
+    "write_task_report",
+]
 
 RUN_LOG_NAME = "run.jsonl"
 SUMMARY_NAME = "summary.md"
 REPORT_NAME = "report.md"
-MASK = "***"
-
-
-def mask_secrets(text: str, secrets: Sequence[str] | None = None) -> str:
-    """Replace every secret value in ``text`` with ``***``.
-
-    By default the only secret is the ``OPENAI_API_KEY`` environment value —
-    the single credential sdd-codex ever handles (D-04).
-    """
-    if secrets is None:
-        secrets = [os.environ.get("OPENAI_API_KEY") or ""]
-    for secret in secrets:
-        if secret:
-            text = text.replace(secret, MASK)
-    return text
 
 
 def _unique_run_id(parent: Path) -> str:
@@ -101,10 +93,12 @@ class RunArtifacts:
         for path in sorted(Path(task_dir).glob("attempt-*")):
             if not path.is_file():
                 continue
-            original = path.read_text(encoding="utf-8")
-            masked = mask_secrets(original)
+            # Bytes, not text: a non-UTF-8 byte in an attempt file must not
+            # abort the masking pass and leave the key in later files.
+            original = path.read_bytes()
+            masked = mask_secret_bytes(original)
             if masked != original:
-                path.write_text(masked, encoding="utf-8")
+                path.write_bytes(masked)
 
 
 def write_task_report(
@@ -114,9 +108,18 @@ def write_task_report(
     attempts: Sequence[AttemptResult],
     total_tokens: int = 0,
     total_usd: float = 0.0,
+    reason: str = "",
 ) -> Path:
-    """BEH-25: the task's final report, written on success and failure alike."""
+    """BEH-25: the task's final report, written on success and failure alike.
+
+    ``reason`` is the task's final failure reason; it is printed when the
+    attempt list does not already carry it — a refusal (``TaskRejected``,
+    dirty tree) produces no attempts, and a budget stop's reason differs
+    from the last attempt's failure.
+    """
     lines = [f"# {task.id}: {task.name}", "", f"Status: {status}"]
+    if reason and (not attempts or reason != attempts[-1].failure_reason):
+        lines.append(f"Reason: {reason.splitlines()[0]}")
     if attempts:
         lines.append(f"Verify command: `{attempts[0].verify_command}`")
     try:

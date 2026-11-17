@@ -12,11 +12,29 @@ even when the limits are off (BEH-21).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sdd_codex.config import BudgetConfig
 
 STOP_BUDGET = "budget"
+
+# ``codex exec`` reports its spend as a trailing "tokens used: N" line; the
+# CLI does not split input/output tokens, so the total lands in one field.
+_TOKENS_USED_RE = re.compile(r"tokens used:?\s*([\d,]+)", re.IGNORECASE)
+
+
+def parse_codex_tokens(text: str) -> int | None:
+    """The token total of one ``codex exec`` run, or ``None`` if absent.
+
+    The *last* match wins: the spend summary is the trailing line, while the
+    echoed prompt or the agent's own prose may well contain the phrase
+    "tokens used" earlier in the output.
+    """
+    matches = _TOKENS_USED_RE.findall(text)
+    if not matches:
+        return None
+    return int(matches[-1].replace(",", ""))
 
 
 @dataclass(frozen=True)

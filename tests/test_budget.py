@@ -10,9 +10,14 @@ import pytest
 
 from sdd_codex.artifacts import RunArtifacts
 from sdd_codex.budget import BudgetTracker, Usage
-from sdd_codex.config import BudgetConfig
+from sdd_codex.config import BudgetConfig, RunConfig
 from sdd_codex.progress import Progress
-from sdd_codex.runner import STATUS_NOT_STARTED, STOP_BUDGET, run_tasks
+from sdd_codex.runner import (
+    STATUS_FAILED,
+    STATUS_NOT_STARTED,
+    STOP_BUDGET,
+    run_tasks,
+)
 
 
 def test_budget_stop_only_when_configured(spec_repo, make_spec_coder, tmp_path):
@@ -81,3 +86,34 @@ def test_budget_stop_only_when_configured(spec_repo, make_spec_coder, tmp_path):
     assert run_event["total_tokens"] == 2000
     summary = (report.run_dir / "summary.md").read_text(encoding="utf-8")
     assert "2000 tokens" in summary
+
+
+def test_budget_stops_between_attempts_of_one_task(
+    spec_repo, make_spec_coder, tmp_path
+):
+    """D-15: the spend stop fires between the attempts of one task, not
+    only between tasks — an exhausted budget must not burn the remaining
+    retries."""
+    config = replace(
+        spec_repo.config,
+        run=RunConfig(max_retries=5),
+        budget=BudgetConfig(max_tokens=2500),
+    )
+    # Every attempt fails (wrong output) and spends 2 x 1000 tokens, so
+    # attempt 2 ends at 4000 > 2500 and attempts 3..5 must never start.
+    coder = make_spec_coder(wrong_until={"TASK-201": 99}, usage_per_call=1000)
+
+    report = run_tasks(
+        spec_repo.spec_set(),
+        config,
+        spec_repo.repo,
+        coder,
+        artifacts=RunArtifacts(tmp_path / "mid-task"),
+        progress=Progress(io.StringIO()),
+    )
+
+    assert report.stop_reason == STOP_BUDGET
+    first = report.tasks[0]
+    assert first.status == STATUS_FAILED
+    assert len(first.attempts) == 2  # stopped well before max_retries=5
+    assert "budget" in first.reason

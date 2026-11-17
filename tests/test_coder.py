@@ -117,3 +117,38 @@ def test_codex_cli_coder_failures_raise_coder_error(
     monkeypatch.setattr(subprocess, "run", unrunnable)
     with pytest.raises(CoderError, match="cannot run"):
         CodexCliCoder("/work/repo", model="m")(_request(STEP_WRITE_TEST))
+
+
+def test_coder_transcript_and_trailing_token_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The coder hands the prompt and the agent's reply to the attempt log
+    through ``take_transcript`` (BEH-24); the spend comes from the stderr
+    summary line, not from prose that merely mentions tokens."""
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="I think tokens used: 5 is fine\ndone\n",
+            stderr="work summary\ntokens used: 2,000\n",
+        )
+
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    coder = CodexCliCoder("/work/repo", model="m")
+
+    coder(_request(STEP_WRITE_TEST))
+
+    # stderr's trailing summary wins over the stdout prose mention.
+    assert coder.take_usage() == [Usage(model="m", output_tokens=2000)]
+    transcript = coder.take_transcript()
+    assert any(
+        part.startswith("--- prompt") and "TASK-101: Demo task" in part
+        for part in transcript
+    )
+    assert any(
+        part.startswith("--- agent output") and "done" in part
+        for part in transcript
+    )
+    assert coder.take_transcript() == []  # drained once, then cleared

@@ -24,6 +24,7 @@ from sdd_codex.artifacts import RunArtifacts
 from sdd_codex.coder import CodexCliCoder
 from sdd_codex.config import DEFAULT_CONFIG_FILENAME, Config, load_config
 from sdd_codex.errors import CliError, ConfigError, PlannerError, SpecFormatError
+from sdd_codex.git import ARTIFACTS_DIR
 from sdd_codex.planner import CodexCliPlanner, Planner, plan_spec
 from sdd_codex.planner.codex import CODEX_BINARY
 from sdd_codex.review import CodexCliReviewer, ReviewerAgent
@@ -154,13 +155,21 @@ def _cmd_run(args: argparse.Namespace, agents: Agents) -> int:
     set is a refusal naming the file — never an attempt to recreate it.
     """
     config = _load_cli_config(args.config)
-    spec_set = load_spec_set(config.paths.spec_dir)
     repo = _git_root(Path.cwd())
     if repo is None:
         raise CliError(
             f"run {PROG} from inside a git work tree: "
             "task commits go to the current branch (D-13)"
         )
+    # Relative config paths are anchored at the repository root, not the
+    # cwd: task commits, the freeze check and ``mark_task_done`` all work
+    # against the root, so a run started from a subdirectory must see the
+    # same files.
+    spec_dir = Path(config.paths.spec_dir)
+    if not spec_dir.is_absolute():
+        spec_dir = repo / spec_dir
+    artifacts_dir = _resolve_artifacts_dir(repo, config.paths.artifacts_dir)
+    spec_set = load_spec_set(spec_dir)
     if args.task is not None and args.task not in spec_set.tasks.task_ids():
         raise CliError(f"unknown task id {args.task!r} in the spec set")
     coder = agents.coder or CodexCliCoder(
@@ -179,7 +188,7 @@ def _cmd_run(args: argparse.Namespace, agents: Agents) -> int:
         repo,
         coder,
         reviewer,
-        artifacts=RunArtifacts(config.paths.artifacts_dir),
+        artifacts=RunArtifacts(artifacts_dir),
         only_task=args.task,
     )
     print(f"run artifacts: {report.run_dir}")
@@ -200,6 +209,32 @@ def _cmd_validate(args: argparse.Namespace, agents: Agents) -> int:
         return 1
     print(f"spec set in {config.paths.spec_dir!r} is valid")
     return 0
+
+
+def _resolve_artifacts_dir(repo: Path, configured: str) -> Path:
+    """Anchor ``paths.artifacts_dir`` at the repo root and vet its location.
+
+    The git layer excludes exactly ``.sdd-codex/`` from the dirty-tree
+    refusal, the freeze check and the rollback clean. An artifacts
+    directory inside the repo but outside ``.sdd-codex/`` would therefore
+    fail every attempt at the freeze step and get deleted by the rollback —
+    refuse it up front instead. A directory outside the repo is invisible
+    to git and always fine.
+    """
+    artifacts_dir = Path(configured)
+    if not artifacts_dir.is_absolute():
+        artifacts_dir = repo / artifacts_dir
+    try:
+        relative = artifacts_dir.resolve().relative_to(repo.resolve())
+    except ValueError:
+        return artifacts_dir  # outside the repository
+    if relative.parts[:1] != (ARTIFACTS_DIR,):
+        raise CliError(
+            f"paths.artifacts_dir {configured!r} is inside the repository "
+            f"but outside {ARTIFACTS_DIR}/; keep run artifacts under "
+            f"{ARTIFACTS_DIR}/ or outside the repository"
+        )
+    return artifacts_dir
 
 
 def _git_root(start: Path) -> Path | None:

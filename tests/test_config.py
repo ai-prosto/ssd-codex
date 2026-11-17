@@ -158,3 +158,11 @@ def test_config_file_and_value_errors(tmp_path: Path) -> None:
     config = load_config(write_config(tmp_path, "{}\n"))
     with pytest.raises(ConfigError, match="unknown agent role"):
         config.openai.models.for_role("janitor")
+
+
+def test_run_max_retries_must_be_positive(tmp_path: Path) -> None:
+    """D-14: every task gets at least one attempt; ``max_retries: 0`` would
+    silently stop the run before any work."""
+    path = write_config(tmp_path, "run:\n  max_retries: 0\n")
+    with pytest.raises(ConfigError, match="run.max_retries"):
+        load_config(path)

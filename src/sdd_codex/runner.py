@@ -102,14 +102,15 @@ def run_tasks(
 
     for record in records:
         task = record.task
+        if task.status == "done":
+            # D-18: the DONE mark in tasks.md is the resume point; a task
+            # already committed stays "already DONE" even after a stop.
+            record.status = STATUS_SKIPPED
+            artifacts.append_event(event="task", task=task.id, status=STATUS_SKIPPED)
+            continue
         if report.stop_reason:
             # BEH-20: after the stop no following task is started.
             record.status = STATUS_NOT_STARTED
-            continue
-        if task.status == "done":
-            # D-18: the DONE mark in tasks.md is the resume point.
-            record.status = STATUS_SKIPPED
-            artifacts.append_event(event="task", task=task.id, status=STATUS_SKIPPED)
             continue
 
         progress.task_start(task)
@@ -191,6 +192,7 @@ def run_tasks(
             record.attempts,
             total_tokens=budget.total_tokens,
             total_usd=budget.total_usd,
+            reason=record.reason,
         )
         if not report.stop_reason:
             budget_reason = budget.stop_reason()

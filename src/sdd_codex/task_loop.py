@@ -41,6 +41,7 @@ from sdd_codex.freeze import (
     rollback,
 )
 from sdd_codex.git import Git
+from sdd_codex.masking import mask_secrets
 from sdd_codex.review import ReviewerAgent, review_path, run_review
 from sdd_codex.verify import run_verify, verify_command
 
@@ -169,11 +170,26 @@ def run_task_attempt(
         if on_step is not None:
             on_step(step, detail)
 
+    def drain_transcript() -> None:
+        """BEH-24: the coder's prompts and replies belong in the attempt log.
+
+        A coder may expose ``take_transcript() -> Iterable[str]`` (the real
+        :class:`~sdd_codex.coder.CodexCliCoder` does); scripted fakes
+        without the method are silently skipped.
+        """
+        take = getattr(coder, "take_transcript", None)
+        if callable(take):
+            log.extend(take())
+
     def finish() -> AttemptResult:
-        log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+        # Masked at write time, not only post-attempt: an interrupt between
+        # the write and the runner's masking pass must not leave the key on
+        # disk.
+        log_path.write_text(mask_secrets("\n".join(log)) + "\n", encoding="utf-8")
         return result
 
     def fail(step: str, reason: str) -> AttemptResult:
+        drain_transcript()
         result.step_reached = step
         result.failure_reason = reason
         log.append(f"[{step}] FAIL: {reason}")
@@ -201,6 +217,7 @@ def run_task_attempt(
                 review_comments=prior_comments,
             )
         )
+        drain_transcript()
         violations = check_frozen(git.status_porcelain(), allowed)
         if violations:
             return fail(
@@ -219,7 +236,7 @@ def run_task_attempt(
             "ok (exit 0)" if red.passed else f"fail (exit {red.returncode})",
         )
         red_path = task_dir / f"attempt-{attempt:02d}.red.txt"
-        red_path.write_text(red.output, encoding="utf-8")
+        red_path.write_text(mask_secrets(red.output), encoding="utf-8")
         result.red_output_path = red_path
         log.append(f"[red] $ {command}")
         log.append(f"[red] exit {red.returncode}; output saved to {red_path.name}")
@@ -248,6 +265,7 @@ def run_task_attempt(
                 review_comments=prior_comments,
             )
         )
+        drain_transcript()
         current = _hash_files(repo, test_paths)
         tampered = sorted(
             path
@@ -272,6 +290,7 @@ def run_task_attempt(
         )
         log.append(f"[green] $ {command}")
         log.append(f"[green] exit {green.returncode}")
+        log.append(f"[green] output:\n{green.output}")
         if not green.passed:
             return fail(
                 STEP_GREEN,

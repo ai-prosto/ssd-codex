@@ -67,22 +67,22 @@ Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/3
 
 
 ### TASK-005: Оркестрация прогона: остановка, бюджет, прогресс, артефакты
-P2 | 🔄 IN_PROGRESS   Est: 0.5d
+P2 | ✅ DONE   Est: 0.5d
 
 Реализовать сценарии BEH-18, BEH-19, BEH-20, BEH-21, BEH-22, BEH-23, BEH-24, BEH-25 (DT-05, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-05
 **Depends on:** [TASK-001], [TASK-003], [TASK-004]
 
 **Checklist:**
-- [ ] реализовать BEH-18: Запуск исполняет готовый набор без шага создания спеки
-- [ ] реализовать BEH-19: После N неудачных прогонов задачи прогон останавливается целиком
-- [ ] реализовать BEH-20: После остановки следующие задачи не запускаются
-- [ ] реализовать BEH-21: Стоп по токенам/деньгам срабатывает только когда включён в конфиге
-- [ ] реализовать BEH-22: На запуск задачи печатается строка с id, описанием и временем
-- [ ] реализовать BEH-23: На каждый прогон — своя строка с номером, шагом и результатом теста
-- [ ] реализовать BEH-24: У каждой задачи своя поддиректория с логом на каждый прогон
-- [ ] реализовать BEH-25: В поддиректории задачи лежит итоговый отчёт
-- [ ] проверка группы: tests/test_run_command.py::test_runs_ready_set_without_planning_step (kind: pytest), tests/test_runner.py::test_stops_whole_run_after_max_retries (kind: pytest), tests/test_runner.py::test_following_tasks_not_started_after_stop (kind: pytest), tests/test_budget.py::test_budget_stop_only_when_configured (kind: pytest), tests/test_progress.py::test_prints_task_start_line (kind: pytest), tests/test_progress.py::test_prints_line_per_attempt_with_step_and_result (kind: pytest), tests/test_artifacts.py::test_per_task_dir_with_log_per_attempt (kind: pytest), tests/test_artifacts.py::test_task_report_written_on_success_and_failure (kind: pytest) зелёные на BEH-18, BEH-19, BEH-20, BEH-21, BEH-22, BEH-23, BEH-24, BEH-25
+- [x] реализовать BEH-18: Запуск исполняет готовый набор без шага создания спеки
+- [x] реализовать BEH-19: После N неудачных прогонов задачи прогон останавливается целиком
+- [x] реализовать BEH-20: После остановки следующие задачи не запускаются
+- [x] реализовать BEH-21: Стоп по токенам/деньгам срабатывает только когда включён в конфиге
+- [x] реализовать BEH-22: На запуск задачи печатается строка с id, описанием и временем
+- [x] реализовать BEH-23: На каждый прогон — своя строка с номером, шагом и результатом теста
+- [x] реализовать BEH-24: У каждой задачи своя поддиректория с логом на каждый прогон
+- [x] реализовать BEH-25: В поддиректории задачи лежит итоговый отчёт
+- [x] проверка группы: tests/test_run_command.py::test_runs_ready_set_without_planning_step (kind: pytest), tests/test_runner.py::test_stops_whole_run_after_max_retries (kind: pytest), tests/test_runner.py::test_following_tasks_not_started_after_stop (kind: pytest), tests/test_budget.py::test_budget_stop_only_when_configured (kind: pytest), tests/test_progress.py::test_prints_task_start_line (kind: pytest), tests/test_progress.py::test_prints_line_per_attempt_with_step_and_result (kind: pytest), tests/test_artifacts.py::test_per_task_dir_with_log_per_attempt (kind: pytest), tests/test_artifacts.py::test_task_report_written_on_success_and_failure (kind: pytest) зелёные на BEH-18, BEH-19, BEH-20, BEH-21, BEH-22, BEH-23, BEH-24, BEH-25
 
 
 

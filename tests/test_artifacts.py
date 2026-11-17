@@ -93,3 +93,42 @@ def test_task_report_written_on_success_and_failure(
     assert "step write_test" in failed
     assert "agent crashed" in failed  # the failure reason per attempt
     assert "tokens" in failed
+
+
+def test_mask_task_files_survives_non_utf8_bytes(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """Masking works on raw bytes: a non-UTF-8 byte in one attempt file must
+    not abort the pass and leave the key readable in files globbed after
+    it."""
+    secret = "sk-mask-me-456"
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    artifacts = RunArtifacts(tmp_path / "artifacts")
+    task_dir = artifacts.task_dir("TASK-201")
+    binary = task_dir / "attempt-01.log"
+    binary.write_bytes(b"\xff\xfe raw " + secret.encode("utf-8") + b"\n")
+    later = task_dir / "attempt-02.log"
+    later.write_text(f"key: {secret}\n", encoding="utf-8")
+
+    artifacts.mask_task_files(task_dir)
+
+    assert secret.encode("utf-8") not in binary.read_bytes()
+    assert b"***" in binary.read_bytes()
+    assert secret not in later.read_text(encoding="utf-8")
+
+
+def test_attempt_log_keeps_coder_transcript(spec_repo, make_spec_coder, tmp_path):
+    """BEH-24: attempt-NN.log holds the coder's prompts and replies (drained
+    through ``take_transcript``), not only the step markers."""
+    coder = make_spec_coder()
+
+    report = _run(
+        spec_repo, coder, tmp_path, reviewer=StaticReviewer(),
+        only_task="TASK-201",
+    )
+
+    assert report.exit_code == 0
+    log = (report.run_dir / "TASK-201" / "attempt-01.log").read_text("utf-8")
+    assert "--- prompt (write_test, attempt 01) ---" in log
+    assert "--- prompt (code, attempt 01) ---" in log
+    assert len(report.tasks) == 1  # only_task really narrowed the run

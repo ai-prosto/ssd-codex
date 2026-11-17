@@ -223,6 +223,9 @@ def test_run_subcommand_refusals_name_the_problem(
     assert "git work tree" in capsys.readouterr().err
 
     # A missing set is a refusal naming the file, never a planning attempt.
+    # (The work-tree refusal comes first: the spec path is anchored at the
+    # repo root, so the root must exist before the set can be looked up.)
+    _git(tmp_path, "init", "-q")
     (tmp_path / "spec" / "tasks.md").unlink()
     assert cli.main(["run"]) == 1
     assert "tasks.md" in capsys.readouterr().err

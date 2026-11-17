@@ -102,3 +102,79 @@ def test_run_outside_git_tree_is_refused(
 
     assert rc == 1
     assert "git work tree" in capsys.readouterr().err
+
+
+def test_run_from_subdirectory_anchors_paths_at_repo_root(
+    spec_repo, make_spec_coder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Relative ``paths.*`` anchor at the repo root, not the cwd: a run
+    started from a subdirectory finds the spec, writes the DONE marks and
+    puts the artifacts under the root's gitignored ``.sdd-codex/``."""
+    sub = spec_repo.repo / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+
+    rc = cli.main(["run"], coder=make_spec_coder(), reviewer=StaticReviewer())
+
+    assert rc == 0
+    assert spec_repo.commit_count() == 3  # both tasks committed
+    tasks_text = (spec_repo.repo / "spec" / "tasks.md").read_text(encoding="utf-8")
+    assert tasks_text.count("P2 | DONE") == 2
+    # Artifacts landed at the root (which .gitignore hides), not under cwd.
+    assert (spec_repo.repo / ".sdd-codex" / "runs").is_dir()
+    assert not (sub / ".sdd-codex").exists()
+
+
+def test_run_stop_prints_reason_and_exits_nonzero(
+    spec_repo, make_spec_coder, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """BEH-19 at the CLI boundary: a stopped run names its reason on stderr
+    and the process exit code is non-zero."""
+    monkeypatch.chdir(spec_repo.repo)
+    coder = make_spec_coder(crash=frozenset({"TASK-201"}))
+
+    rc = cli.main(["run"], coder=coder, reviewer=StaticReviewer())
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "run stopped (retries)" in err
+    assert spec_repo.commit_count() == 1  # nothing was committed
+
+
+def test_run_only_task_runs_nothing_else(
+    spec_repo, make_spec_coder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--task`` narrows the run to exactly that task."""
+    monkeypatch.chdir(spec_repo.repo)
+    coder = make_spec_coder()
+
+    rc = cli.main(
+        ["run", "--task", "TASK-201"], coder=coder, reviewer=StaticReviewer()
+    )
+
+    assert rc == 0
+    assert coder.calls and all(call[0] == "TASK-201" for call in coder.calls)
+    assert (spec_repo.repo / "src" / "out_201.txt").is_file()
+    assert not (spec_repo.repo / "src" / "out_202.txt").exists()
+    assert spec_repo.commit_count() == 2  # exactly one task commit
+
+
+def test_in_repo_artifacts_dir_outside_sdd_codex_is_refused(
+    spec_repo, make_spec_coder, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The git layer excludes exactly ``.sdd-codex/``; an artifacts dir
+    elsewhere inside the repo would fail every freeze check and be deleted
+    by the rollback — it is refused before any attempt starts."""
+    monkeypatch.chdir(spec_repo.repo)
+    (spec_repo.repo / "sdd-codex.config.yaml").write_text(
+        "paths:\n  artifacts_dir: build/runs\n", encoding="utf-8"
+    )
+
+    rc = cli.main(["run"], coder=make_spec_coder(), reviewer=StaticReviewer())
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "build/runs" in err and ".sdd-codex" in err
+    assert spec_repo.commit_count() == 1  # nothing was executed

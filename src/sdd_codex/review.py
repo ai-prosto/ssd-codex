@@ -27,9 +27,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from sdd_codex.budget import Usage, parse_codex_tokens
 from sdd_codex.errors import ReviewError
 from sdd_codex.format.tasks import Task
 from sdd_codex.git import Git
+from sdd_codex.masking import mask_secrets
 
 VERDICT_COMMIT = "commit"
 VERDICT_BLOCK = "block"
@@ -179,7 +181,8 @@ def run_review(
     verdict = parse_verdict(reviewer(request))
     path = review_path(task_dir, attempt)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(verdict.to_json() + "\n", encoding="utf-8")
+    # Masked at write time: the reply may quote test output echoing the key.
+    path.write_text(mask_secrets(verdict.to_json()) + "\n", encoding="utf-8")
     return verdict
 
 
@@ -188,12 +191,20 @@ class CodexCliReviewer:
 
     Each call is a separate ``codex exec`` process — a fresh thread with no
     coder history — using ``request.model`` (the ``reviewer`` role model
-    from the config).
+    from the config). A review is a paid call like any coder step, so its
+    usage is collected per call and handed to the budget tracker through
+    :meth:`take_usage` (D-15).
     """
 
     def __init__(self, reasoning_effort: str = "medium", timeout_sec: int = 1800) -> None:
         self.reasoning_effort = reasoning_effort
         self.timeout_sec = timeout_sec
+        self._usage: list[Usage] = []
+
+    def take_usage(self) -> list[Usage]:
+        """Return and clear the usage events accumulated since the last drain."""
+        usage, self._usage = self._usage, []
+        return usage
 
     def __call__(self, request: ReviewRequest) -> str:
         if shutil.which(CODEX_BINARY) is None:
@@ -230,6 +241,11 @@ class CodexCliReviewer:
             ) from exc
         except OSError as exc:
             raise ReviewError(f"cannot run '{CODEX_BINARY}': {exc}") from exc
+        total = parse_codex_tokens(result.stderr)
+        if total is None:
+            total = parse_codex_tokens(result.stdout)
+        if total is not None:
+            self._usage.append(Usage(model=request.model, output_tokens=total))
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip()
             raise ReviewError(

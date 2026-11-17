@@ -255,16 +255,27 @@ class SpecCoder:
     usage_per_call: int = 0
     model: str = "fake-model"
     calls: list[tuple[str, str, int]] = field(default_factory=list)
+    requests: list[CoderRequest] = field(default_factory=list)
     _usage: list = field(default_factory=list)
+    _transcript: list = field(default_factory=list)
 
     def take_usage(self) -> list:
         usage, self._usage = self._usage, []
         return usage
 
+    def take_transcript(self) -> list:
+        transcript, self._transcript = self._transcript, []
+        return transcript
+
     def __call__(self, request: CoderRequest) -> None:
         from sdd_codex.budget import Usage
 
         self.calls.append((request.task.id, request.step, request.attempt))
+        self.requests.append(request)
+        self._transcript.append(
+            f"--- prompt ({request.step}, attempt {request.attempt:02d}) ---\n"
+            "(fake coder prompt)"
+        )
         if self.usage_per_call:
             self._usage.append(
                 Usage(model=self.model, output_tokens=self.usage_per_call)
