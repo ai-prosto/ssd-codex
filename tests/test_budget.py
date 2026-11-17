@@ -117,3 +117,21 @@ def test_budget_stops_between_attempts_of_one_task(
     assert first.status == STATUS_FAILED
     assert len(first.attempts) == 2  # stopped well before max_retries=5
     assert "budget" in first.reason
+
+
+def test_parse_codex_tokens_handles_real_cli_summary_format() -> None:
+    # codex exec (v0.169) prints the summary as "tokens used" on its own
+    # line with the number on the next one, thousands separated by a
+    # no-break space: parsing must not stop at the separator (3 of 3331).
+    from sdd_codex.budget import parse_codex_tokens
+
+    assert parse_codex_tokens("pong\ntokens used\n3 331\n") == 3331
+    assert parse_codex_tokens("tokens used\n12 345 678\n") == 12345678
+    assert parse_codex_tokens("tokens used: 4,849\n") == 4849  # older format
+    assert parse_codex_tokens("tokens used\n41\n") == 41
+    # The last report wins, and a bare mention without a number is ignored.
+    assert (
+        parse_codex_tokens("tokens used: 10\nretry\ntokens used\n2 000\n")
+        == 2000
+    )
+    assert parse_codex_tokens("no summary here\n") is None

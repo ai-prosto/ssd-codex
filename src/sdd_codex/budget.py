@@ -19,9 +19,16 @@ from sdd_codex.config import BudgetConfig
 
 STOP_BUDGET = "budget"
 
-# ``codex exec`` reports its spend as a trailing "tokens used: N" line; the
+# ``codex exec`` reports its spend as a trailing "tokens used" summary; the
 # CLI does not split input/output tokens, so the total lands in one field.
-_TOKENS_USED_RE = re.compile(r"tokens used:?\s*([\d,]+)", re.IGNORECASE)
+# Depending on the CLI version the number follows a colon on the same line
+# ("tokens used: 4,849") or stands on the next line with thousands groups
+# separated by a no-break (U+00A0) or narrow no-break (U+202F) space
+# ("tokens used\n3 331"). The groups-of-three tail keeps the match from
+# running into unrelated digits while accepting any of those separators.
+_TOKENS_USED_RE = re.compile(
+    r"tokens used:?\s*(\d+(?:[,   ]\d{3})*)", re.IGNORECASE
+)
 
 
 def parse_codex_tokens(text: str) -> int | None:
@@ -34,7 +41,7 @@ def parse_codex_tokens(text: str) -> int | None:
     matches = _TOKENS_USED_RE.findall(text)
     if not matches:
         return None
-    return int(matches[-1].replace(",", ""))
+    return int(re.sub(r"\D", "", matches[-1]))
 
 
 @dataclass(frozen=True)
