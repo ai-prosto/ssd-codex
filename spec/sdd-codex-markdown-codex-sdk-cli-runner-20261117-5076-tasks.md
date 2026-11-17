@@ -33,22 +33,22 @@ Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/3
 
 
 ### TASK-003: Цикл задачи: тест, доказанный красный прогон, заморозка, коммит
-P2 | TODO   Est: 0.5d
+P2 | 🔄 IN_PROGRESS   Est: 0.5d
 
 Реализовать сценарии BEH-08, BEH-09, BEH-10, BEH-11, BEH-12, BEH-13, BEH-14, BEH-15 (DT-03, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-03
 **Depends on:** [TASK-001]
 
 **Checklist:**
-- [ ] реализовать BEH-08: Команда проверки берётся из записи задачи
-- [ ] реализовать BEH-09: Красный прогон делает сам runner и сохраняет вывод падения
-- [ ] реализовать BEH-10: Тест, прошедший на красном шаге, закрывает прогон как провальный
-- [ ] реализовать BEH-11: Задача принята только когда та же команда проходит после правки кода
-- [ ] реализовать BEH-12: Менять можно только файлы, перечисленные в задаче
-- [ ] реализовать BEH-13: Любой лишний изменённый файл — прогон не принят
-- [ ] реализовать BEH-14: Коммит только в текущую ветку, без ветвления и PR
-- [ ] реализовать BEH-15: Отметка о выполнении ставится в самом `tasks.md`
-- [ ] проверка группы: tests/test_verify.py::test_command_comes_from_task_record (kind: pytest), tests/test_task_loop.py::test_runner_proves_red_before_coding (kind: pytest), tests/test_task_loop.py::test_green_at_red_step_fails_attempt (kind: pytest), tests/test_task_loop.py::test_accepted_only_when_same_command_passes_green (kind: pytest), tests/test_freeze.py::test_only_task_listed_files_allowed (kind: pytest), tests/test_freeze.py::test_extra_changed_file_rejects_attempt_and_rolls_back (kind: pytest), tests/test_git.py::test_commits_to_current_branch_without_branching_or_pr (kind: pytest), tests/test_status.py::test_marks_task_done_in_tasks_md (kind: pytest) зелёные на BEH-08, BEH-09, BEH-10, BEH-11, BEH-12, BEH-13, BEH-14, BEH-15
+- [x] реализовать BEH-08: Команда проверки берётся из записи задачи
+- [x] реализовать BEH-09: Красный прогон делает сам runner и сохраняет вывод падения
+- [x] реализовать BEH-10: Тест, прошедший на красном шаге, закрывает прогон как провальный
+- [x] реализовать BEH-11: Задача принята только когда та же команда проходит после правки кода
+- [x] реализовать BEH-12: Менять можно только файлы, перечисленные в задаче
+- [x] реализовать BEH-13: Любой лишний изменённый файл — прогон не принят
+- [x] реализовать BEH-14: Коммит только в текущую ветку, без ветвления и PR
+- [x] реализовать BEH-15: Отметка о выполнении ставится в самом `tasks.md`
+- [x] проверка группы: tests/test_verify.py::test_command_comes_from_task_record (kind: pytest), tests/test_task_loop.py::test_runner_proves_red_before_coding (kind: pytest), tests/test_task_loop.py::test_green_at_red_step_fails_attempt (kind: pytest), tests/test_task_loop.py::test_accepted_only_when_same_command_passes_green (kind: pytest), tests/test_freeze.py::test_only_task_listed_files_allowed (kind: pytest), tests/test_freeze.py::test_extra_changed_file_rejects_attempt_and_rolls_back (kind: pytest), tests/test_git.py::test_commits_to_current_branch_without_branching_or_pr (kind: pytest), tests/test_status.py::test_marks_task_done_in_tasks_md (kind: pytest) зелёные на BEH-08, BEH-09, BEH-10, BEH-11, BEH-12, BEH-13, BEH-14, BEH-15
 
 
 
