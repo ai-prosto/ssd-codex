@@ -41,14 +41,15 @@ class CodexCliPlanner:
             result = subprocess.run(
                 command,
                 check=False,
+                # codex appends piped stdin to its prompt; the description
+                # must come only through the CLI arguments (BEH-05).
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
                 timeout=self.timeout_sec,
             )
         except subprocess.TimeoutExpired as exc:
-            raise PlannerError(
-                f"planner timed out after {self.timeout_sec}s"
-            ) from exc
+            raise PlannerError(f"planner timed out after {self.timeout_sec}s") from exc
         except OSError as exc:
             raise PlannerError(f"cannot run '{CODEX_BINARY}': {exc}") from exc
         if result.returncode != 0:

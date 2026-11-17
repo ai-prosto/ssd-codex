@@ -29,7 +29,7 @@ PROG = "sdd-codex"
 
 DESCRIPTION_HINT = (
     "a program description is required: pass it as an argument "
-    f"({PROG} spec \"<description>\") or with --from-file path.md"
+    f'({PROG} spec "<description>") or with --from-file path.md'
 )
 
 
@@ -78,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="check codex in PATH, the API key in the environment, git repo",
     )
+    doctor.add_argument("--config", help="path to sdd-codex.config.yaml")
     doctor.set_defaults(handler=_cmd_doctor)
 
     return parser
@@ -97,8 +98,7 @@ def _resolve_description(args: argparse.Namespace) -> str:
     """BEH-05: the description comes as an argument or from a file, not both."""
     if args.description is not None and args.from_file is not None:
         raise CliError(
-            "pass the description either as an argument or with --from-file, "
-            "not both",
+            "pass the description either as an argument or with --from-file, not both",
             exit_code=2,
         )
     if args.from_file is not None:
@@ -160,6 +160,11 @@ def _git_root(start: Path) -> Path | None:
 
 def _cmd_doctor(args: argparse.Namespace, planner: Planner | None) -> int:
     """D-20: one screen saying what is missing, before any paid call."""
+    config_error: str | None = None
+    try:
+        _load_cli_config(args.config)
+    except ConfigError as exc:
+        config_error = str(exc)
     checks = [
         (
             f"'{CODEX_BINARY}' CLI in PATH",
@@ -175,6 +180,11 @@ def _cmd_doctor(args: argparse.Namespace, planner: Planner | None) -> int:
             "inside a git repository",
             _git_root(Path.cwd()) is not None,
             f"run {PROG} from a git work tree (commits go to the current branch)",
+        ),
+        (
+            f"{args.config or DEFAULT_CONFIG_FILENAME} loads",
+            config_error is None,
+            config_error or "",
         ),
     ]
     all_ok = True
@@ -202,6 +212,13 @@ def main(argv: list[str] | None = None, *, planner: Planner | None = None) -> in
         return exc.exit_code
     except (ConfigError, SpecFormatError, PlannerError) as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print(f"{PROG}: interrupted", file=sys.stderr)
+        return 130
+    except BrokenPipeError:
+        # Downstream closed the pipe (e.g. `| head`); exit without a traceback.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 1
 
 

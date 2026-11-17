@@ -89,8 +89,13 @@ def split_planner_output(text: str) -> SpecFiles:
     sections: dict[str, str] = {}
     markers = list(FILE_MARKER_RE.finditer(text))
     for index, marker in enumerate(markers):
+        name = marker.group(1)
+        if name in sections:
+            raise PlannerError(
+                f"planner output contains '=== FILE: {name} ===' more than once"
+            )
         end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
-        sections[marker.group(1)] = text[marker.end() : end].strip("\n") + "\n"
+        sections[name] = text[marker.end() : end].strip("\n") + "\n"
     missing = [name for name in SPEC_FILE_NAMES if name not in sections]
     if missing:
         raise PlannerError(
@@ -110,8 +115,26 @@ def validate_spec_files(files: SpecFiles, spec_dir: Path) -> list[SpecIssue]:
     issues: list[SpecIssue] = []
     requirements = parse_doc(files.requirements, spec_dir / REQUIREMENTS_FILE)
     issues.extend(requirements.issues)
+    if not requirements.blocks:
+        issues.append(
+            SpecIssue(
+                str(spec_dir / REQUIREMENTS_FILE),
+                None,
+                None,
+                "no '### REQ-NNN: name' blocks found",
+            )
+        )
     design = parse_doc(files.design, spec_dir / DESIGN_FILE)
     issues.extend(design.issues)
+    if not design.blocks:
+        issues.append(
+            SpecIssue(
+                str(spec_dir / DESIGN_FILE),
+                None,
+                None,
+                "no '### DESIGN-NNN: name' blocks found",
+            )
+        )
     tasks = parse_tasks(files.tasks, spec_dir / TASKS_FILE)
     issues.extend(tasks.issues)
     issues.extend(validate_dependencies(tasks))

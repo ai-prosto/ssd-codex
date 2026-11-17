@@ -14,6 +14,7 @@ from sdd_codex.planner import (
     CodexCliPlanner,
     PlannerRequest,
     SpecFiles,
+    build_planner_prompt,
     split_planner_output,
 )
 from sdd_codex.specset import load_spec_set
@@ -285,16 +286,25 @@ def test_codex_cli_planner_runs_codex_and_splits_output(
         + VALID_TASKS
     )
 
+    run_kwargs: list[dict[str, object]] = []
+
     def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
         commands.append(command)
+        run_kwargs.append(kwargs)
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
     monkeypatch.setattr("sdd_codex.planner.codex.subprocess.run", fake_run)
-    files = CodexCliPlanner()(request)
+    files = CodexCliPlanner(timeout_sec=123)(request)
     assert files.tasks == VALID_TASKS
     assert commands[0][:2] == ["codex", "exec"]
-    assert "gpt-test" in commands[0]
+    assert commands[0][commands[0].index("--model") + 1] == "gpt-test"
+    assert "model_reasoning_effort=medium" in commands[0]
     assert commands[0][-1] == "p"
+    # The prompt must be the only input channel and the timeout must reach
+    # the subprocess, or a hung codex would stall the command forever.
+    assert run_kwargs[0]["timeout"] == 123
+    assert run_kwargs[0]["stdin"] is subprocess.DEVNULL
+    assert run_kwargs[0]["encoding"] == "utf-8"
 
     def failing_run(command: list[str], **kwargs: object) -> SimpleNamespace:
         return SimpleNamespace(returncode=3, stdout="", stderr="boom")
@@ -305,3 +315,173 @@ def test_codex_cli_planner_runs_codex_and_splits_output(
 
     with pytest.raises(PlannerError, match="missing section"):
         split_planner_output("=== FILE: requirements.md ===\nonly one\n")
+
+
+def test_codex_cli_planner_timeout_and_exec_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = PlannerRequest(
+        description="d", prompt="p", model="m", reasoning_effort="low"
+    )
+    monkeypatch.setattr(
+        "sdd_codex.planner.codex.shutil.which", lambda name: "/usr/bin/codex"
+    )
+
+    def timeout_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr("sdd_codex.planner.codex.subprocess.run", timeout_run)
+    with pytest.raises(PlannerError, match="timed out after 7s"):
+        CodexCliPlanner(timeout_sec=7)(request)
+
+    def exec_failure_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        raise OSError("exec failed")
+
+    monkeypatch.setattr("sdd_codex.planner.codex.subprocess.run", exec_failure_run)
+    with pytest.raises(PlannerError, match="cannot run 'codex'"):
+        CodexCliPlanner()(request)
+
+
+def test_build_planner_prompt_contains_contract_templates_and_description() -> None:
+    prompt = build_planner_prompt("WIDGET FROBNICATOR")
+    # The output contract (the FILE markers) is specified in the system prompt.
+    assert "=== FILE: requirements.md ===" in prompt
+    for template in (
+        "requirements.template.md",
+        "design.template.md",
+        "tasks.template.md",
+    ):
+        assert f"=== TEMPLATE: {template} ===" in prompt
+    assert "### REQ-001" in prompt
+    assert "### DESIGN-001" in prompt
+    assert "### TASK-001" in prompt
+    assert prompt.rstrip().endswith("WIDGET FROBNICATOR")
+
+
+def test_split_planner_output_ignores_preamble_and_rejects_duplicates() -> None:
+    preamble = "codex session 0123\nthinking tokens: 42\n"
+    output = (
+        preamble
+        + "=== FILE: requirements.md ===\n"
+        + VALID_REQUIREMENTS
+        + "=== FILE: design.md ===\n"
+        + VALID_DESIGN
+        + "=== FILE: tasks.md ===\n"
+        + VALID_TASKS
+    )
+    files = split_planner_output(output)
+    assert files.requirements == VALID_REQUIREMENTS
+    assert files.design == VALID_DESIGN
+    assert files.tasks == VALID_TASKS
+
+    with pytest.raises(PlannerError, match="more than once"):
+        split_planner_output(output + "=== FILE: tasks.md ===\nsecond copy\n")
+
+
+def test_empty_requirements_or_design_is_a_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """BEH-06: a block-less document is a format error, not a silent write."""
+    monkeypatch.chdir(tmp_path)
+    empty_requirements = StubPlanner(
+        SpecFiles(requirements="\n", design=VALID_DESIGN, tasks=VALID_TASKS)
+    )
+    assert cli.main(["spec", "x"], planner=empty_requirements) == 1
+    assert "no '### REQ-NNN: name' blocks found" in capsys.readouterr().err
+    assert not (tmp_path / "spec").exists()
+
+    empty_design = StubPlanner(
+        SpecFiles(requirements=VALID_REQUIREMENTS, design="", tasks=VALID_TASKS)
+    )
+    assert cli.main(["spec", "x"], planner=empty_design) == 1
+    assert "no '### DESIGN-NNN: name' blocks found" in capsys.readouterr().err
+    assert not (tmp_path / "spec").exists()
+
+
+def test_explicit_config_flag_beats_default_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    custom = tmp_path / "configs" / "custom.yaml"
+    custom.parent.mkdir()
+    custom.write_text("paths:\n  spec_dir: fromflag\n", encoding="utf-8")
+    assert cli.main(["spec", "x", "--config", str(custom)], planner=StubPlanner()) == 0
+    assert (tmp_path / "fromflag" / "tasks.md").is_file()
+
+    capsys.readouterr()
+    missing = str(tmp_path / "missing.yaml")
+    assert cli.main(["spec", "x", "--config", missing], planner=StubPlanner()) == 1
+    assert "config file not found" in capsys.readouterr().err
+
+
+def test_spec_builds_codex_planner_with_configured_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sdd-codex.config.yaml").write_text(
+        "run:\n  attempt_timeout_sec: 123\n", encoding="utf-8"
+    )
+    stub = StubPlanner()
+    created: list[int] = []
+
+    def factory(timeout_sec: int) -> StubPlanner:
+        created.append(timeout_sec)
+        return stub
+
+    monkeypatch.setattr(cli, "CodexCliPlanner", factory)
+    assert cli.main(["spec", "x"]) == 0
+    assert created == [123]
+    assert len(stub.requests) == 1
+
+
+def test_from_file_unreadable_and_blank_description(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    planner = StubPlanner()
+    absent = str(tmp_path / "absent.md")
+    assert cli.main(["spec", "--from-file", absent], planner=planner) == 1
+    assert "cannot read --from-file" in capsys.readouterr().err
+
+    assert cli.main(["spec", "   \n\t "], planner=planner) == 2
+    assert "description is required" in capsys.readouterr().err
+    assert planner.requests == []
+
+
+def test_doctor_reports_broken_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/codex")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "sdd-codex.config.yaml").write_text(
+        "paths: [not, a, mapping\n", encoding="utf-8"
+    )
+    assert cli.main(["doctor"]) == 1
+    out = capsys.readouterr().out
+    assert "MISSING" in out
+    assert "loads" in out
+
+
+def test_keyboard_interrupt_exits_130(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def interrupt(request: PlannerRequest) -> SpecFiles:
+        raise KeyboardInterrupt
+
+    assert cli.main(["spec", "x"], planner=interrupt) == 130
+    assert "interrupted" in capsys.readouterr().err
