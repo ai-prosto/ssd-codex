@@ -309,6 +309,30 @@ def test_codex_cli_reviewer_spawns_fresh_exec_with_reviewer_model(
     assert "diff --git a/x b/x" in kwargs["input"]
 
 
+def test_codex_cli_reviewer_reports_usage_for_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D-15: a review is a paid call like any coder step — its ``tokens
+    used`` summary reaches the budget tracker through ``take_usage``."""
+    from sdd_codex.budget import Usage
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0, stdout=COMMIT_REPLY, stderr="tokens used: 4,321\n"
+        )
+
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    reviewer = CodexCliReviewer()
+
+    reviewer(_request())
+
+    assert reviewer.take_usage() == [
+        Usage(model="reviewer-model", output_tokens=4321)
+    ]
+    assert reviewer.take_usage() == []  # drained once, then cleared
+
+
 def test_codex_cli_reviewer_failures_raise_review_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

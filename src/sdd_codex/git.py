@@ -124,13 +124,22 @@ class Git:
     def diff_head(self) -> str:
         return self._run("diff", "HEAD")
 
+    def _add_all_except_artifacts(self, *flags: str) -> None:
+        """Stage everything, then unstage the artifacts directory.
+
+        An ``:(exclude)`` pathspec cannot do this: when the artifacts
+        directory is gitignored *and* exists, naming it in any pathspec makes
+        ``git add`` refuse with "paths are ignored", while a plain ``-A .``
+        skips ignored paths silently. The follow-up ``reset`` covers the
+        case where the directory is not gitignored."""
+        self._run("add", *flags, "-A", "--", ".")
+        self._run("reset", "--quiet", "HEAD", "--", ARTIFACTS_DIR)
+
     def diff_head_with_untracked(self) -> str:
         """``git diff HEAD`` with new files included: untracked paths are
         registered with ``--intent-to-add`` first (artifacts excluded), as a
         plain ``diff HEAD`` would silently hide files the agent created."""
-        self._run(
-            "add", "--intent-to-add", "-A", "--", ".", f":(exclude){ARTIFACTS_DIR}"
-        )
+        self._add_all_except_artifacts("--intent-to-add")
         return self._run("diff", "HEAD")
 
     def unstage_all(self) -> None:
@@ -149,6 +158,6 @@ class Git:
 
     def commit_all(self, message: str) -> str:
         """Stage everything except artifacts and commit to the current HEAD."""
-        self._run("add", "-A", "--", ".", f":(exclude){ARTIFACTS_DIR}")
+        self._add_all_except_artifacts()
         self._run("commit", "--quiet", "-m", message)
         return self.head()

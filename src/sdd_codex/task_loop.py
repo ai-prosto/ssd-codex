@@ -41,6 +41,7 @@ from sdd_codex.freeze import (
     rollback,
 )
 from sdd_codex.git import Git
+from sdd_codex.masking import mask_secrets
 from sdd_codex.review import ReviewerAgent, review_path, run_review
 from sdd_codex.verify import run_verify, verify_command
 
@@ -124,6 +125,7 @@ def run_task_attempt(
     attempt: int = 1,
     reviewer: ReviewerAgent | None = None,
     review_comments: Sequence[str] = (),
+    on_step: Callable[[str, str], None] | None = None,
 ) -> AttemptResult:
     """Run one attempt of ``task``; never raises on a *failed* attempt.
 
@@ -131,6 +133,9 @@ def run_task_attempt(
     the orchestrator always wires one, ``None`` skips the gate for
     lower-level tests. ``review_comments`` are the comments of the previous
     blocked attempt; they travel into every coder prompt of this attempt.
+    ``on_step`` observes progress (D-16): it is called with the step name on
+    every step change and again with a result detail once the verify command
+    of the red or green step has finished.
 
     Raises :class:`~sdd_codex.errors.TaskRejected` when the task record
     itself is unusable (no verify command, no file list) and
@@ -161,11 +166,30 @@ def run_task_attempt(
             + "; ".join(prior_comments)
         )
 
+    def notify(step: str, detail: str = "") -> None:
+        if on_step is not None:
+            on_step(step, detail)
+
+    def drain_transcript() -> None:
+        """BEH-24: the coder's prompts and replies belong in the attempt log.
+
+        A coder may expose ``take_transcript() -> Iterable[str]`` (the real
+        :class:`~sdd_codex.coder.CodexCliCoder` does); scripted fakes
+        without the method are silently skipped.
+        """
+        take = getattr(coder, "take_transcript", None)
+        if callable(take):
+            log.extend(take())
+
     def finish() -> AttemptResult:
-        log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+        # Masked at write time, not only post-attempt: an interrupt between
+        # the write and the runner's masking pass must not leave the key on
+        # disk.
+        log_path.write_text(mask_secrets("\n".join(log)) + "\n", encoding="utf-8")
         return result
 
     def fail(step: str, reason: str) -> AttemptResult:
+        drain_transcript()
         result.step_reached = step
         result.failure_reason = reason
         log.append(f"[{step}] FAIL: {reason}")
@@ -182,6 +206,7 @@ def run_task_attempt(
         # Step 1 — the agent writes the test; D-11: after every step only
         # the task's allowed list may differ from HEAD.
         result.step_reached = STEP_WRITE_TEST
+        notify(STEP_WRITE_TEST)
         coder(
             CoderRequest(
                 task=task,
@@ -192,6 +217,7 @@ def run_task_attempt(
                 review_comments=prior_comments,
             )
         )
+        drain_transcript()
         violations = check_frozen(git.status_porcelain(), allowed)
         if violations:
             return fail(
@@ -203,9 +229,14 @@ def run_task_attempt(
 
         # Step 2 — the runner itself proves the red run (BEH-09).
         result.step_reached = STEP_RED
+        notify(STEP_RED)
         red = run_verify(command, repo, config.verify.timeout_sec)
+        notify(
+            STEP_RED,
+            "ok (exit 0)" if red.passed else f"fail (exit {red.returncode})",
+        )
         red_path = task_dir / f"attempt-{attempt:02d}.red.txt"
-        red_path.write_text(red.output, encoding="utf-8")
+        red_path.write_text(mask_secrets(red.output), encoding="utf-8")
         result.red_output_path = red_path
         log.append(f"[red] $ {command}")
         log.append(f"[red] exit {red.returncode}; output saved to {red_path.name}")
@@ -222,6 +253,7 @@ def run_task_attempt(
 
         # Step 3 — the agent writes code; test files are frozen by hash.
         result.step_reached = STEP_CODE
+        notify(STEP_CODE)
         coder(
             CoderRequest(
                 task=task,
@@ -233,6 +265,7 @@ def run_task_attempt(
                 review_comments=prior_comments,
             )
         )
+        drain_transcript()
         current = _hash_files(repo, test_paths)
         tampered = sorted(
             path
@@ -249,9 +282,15 @@ def run_task_attempt(
 
         # Step 4 — the same command string must pass now (BEH-11).
         result.step_reached = STEP_GREEN
+        notify(STEP_GREEN)
         green = run_verify(command, repo, config.verify.timeout_sec)
+        notify(
+            STEP_GREEN,
+            "ok (exit 0)" if green.passed else f"fail (exit {green.returncode})",
+        )
         log.append(f"[green] $ {command}")
         log.append(f"[green] exit {green.returncode}")
+        log.append(f"[green] output:\n{green.output}")
         if not green.passed:
             return fail(
                 STEP_GREEN,
@@ -261,6 +300,7 @@ def run_task_attempt(
 
         # Step 5 — freeze: only the task's listed files may have changed.
         result.step_reached = STEP_FREEZE
+        notify(STEP_FREEZE)
         violations = check_frozen(git.status_porcelain(), allowed)
         if violations:
             return fail(
@@ -275,6 +315,7 @@ def run_task_attempt(
         # only its "commit" verdict opens the path to the commit (BEH-16).
         if reviewer is not None:
             result.step_reached = STEP_REVIEW
+            notify(STEP_REVIEW)
             verdict = run_review(
                 task=task,
                 attempt=attempt,
@@ -303,6 +344,7 @@ def run_task_attempt(
 
         # Step 7 — commit to the current branch; the DONE mark joins the commit.
         result.step_reached = STEP_COMMIT
+        notify(STEP_COMMIT)
         tasks_file = Path(task.file)
         if not tasks_file.is_absolute():
             tasks_file = repo / tasks_file

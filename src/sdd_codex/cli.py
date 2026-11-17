@@ -17,13 +17,20 @@ import argparse
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
+from sdd_codex.artifacts import RunArtifacts
+from sdd_codex.coder import CodexCliCoder
 from sdd_codex.config import DEFAULT_CONFIG_FILENAME, Config, load_config
 from sdd_codex.errors import CliError, ConfigError, PlannerError, SpecFormatError
+from sdd_codex.git import ARTIFACTS_DIR
 from sdd_codex.planner import CodexCliPlanner, Planner, plan_spec
 from sdd_codex.planner.codex import CODEX_BINARY
+from sdd_codex.review import CodexCliReviewer, ReviewerAgent
+from sdd_codex.runner import run_tasks
 from sdd_codex.specset import load_spec_set, validate_spec_set
+from sdd_codex.task_loop import CoderAgent
 
 PROG = "sdd-codex"
 
@@ -31,6 +38,15 @@ DESCRIPTION_HINT = (
     "a program description is required: pass it as an argument "
     f'({PROG} spec "<description>") or with --from-file path.md'
 )
+
+
+@dataclass(frozen=True)
+class Agents:
+    """The injectable agents; ``None`` means the real Codex CLI agent."""
+
+    planner: Planner | None = None
+    coder: CoderAgent | None = None
+    reviewer: ReviewerAgent | None = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -117,10 +133,11 @@ def _resolve_description(args: argparse.Namespace) -> str:
     return description
 
 
-def _cmd_spec(args: argparse.Namespace, planner: Planner | None) -> int:
+def _cmd_spec(args: argparse.Namespace, agents: Agents) -> int:
     """BEH-06/BEH-07: write exactly three validated files, execute nothing."""
     description = _resolve_description(args)
     config = _load_cli_config(args.config)
+    planner = agents.planner
     if planner is None:
         planner = CodexCliPlanner(timeout_sec=config.run.attempt_timeout_sec)
     spec_dir = plan_spec(description, config, planner)
@@ -130,17 +147,60 @@ def _cmd_spec(args: argparse.Namespace, planner: Planner | None) -> int:
     return 0
 
 
-def _cmd_run(args: argparse.Namespace, planner: Planner | None) -> int:
-    """Execute a ready set (D-08). Execution itself lands with TASK-003..005."""
+def _cmd_run(args: argparse.Namespace, agents: Agents) -> int:
+    """BEH-18 / D-08: execute a ready set; the planner is never involved.
+
+    The three set files must already exist in ``paths.spec_dir`` (written by
+    ``sdd-codex spec`` or by another application): a missing or unparsable
+    set is a refusal naming the file — never an attempt to recreate it.
+    """
     config = _load_cli_config(args.config)
-    load_spec_set(config.paths.spec_dir)
-    raise CliError(
-        "the spec set parsed cleanly, but task execution is not implemented "
-        "yet (coming with TASK-003..TASK-005)"
+    repo = _git_root(Path.cwd())
+    if repo is None:
+        raise CliError(
+            f"run {PROG} from inside a git work tree: "
+            "task commits go to the current branch (D-13)"
+        )
+    # Relative config paths are anchored at the repository root, not the
+    # cwd: task commits, the freeze check and ``mark_task_done`` all work
+    # against the root, so a run started from a subdirectory must see the
+    # same files.
+    spec_dir = Path(config.paths.spec_dir)
+    if not spec_dir.is_absolute():
+        spec_dir = repo / spec_dir
+    artifacts_dir = _resolve_artifacts_dir(repo, config.paths.artifacts_dir)
+    spec_set = load_spec_set(spec_dir)
+    if args.task is not None and args.task not in spec_set.tasks.task_ids():
+        raise CliError(f"unknown task id {args.task!r} in the spec set")
+    coder = agents.coder or CodexCliCoder(
+        repo=str(repo),
+        model=config.openai.models.for_role("coder"),
+        reasoning_effort=config.openai.reasoning_effort,
+        timeout_sec=config.run.attempt_timeout_sec,
     )
+    reviewer = agents.reviewer or CodexCliReviewer(
+        reasoning_effort=config.openai.reasoning_effort,
+        timeout_sec=config.run.attempt_timeout_sec,
+    )
+    report = run_tasks(
+        spec_set,
+        config,
+        repo,
+        coder,
+        reviewer,
+        artifacts=RunArtifacts(artifacts_dir),
+        only_task=args.task,
+    )
+    print(f"run artifacts: {report.run_dir}")
+    if report.stop_reason:
+        print(
+            f"{PROG}: run stopped ({report.stop_reason}): {report.stop_detail}",
+            file=sys.stderr,
+        )
+    return report.exit_code
 
 
-def _cmd_validate(args: argparse.Namespace, planner: Planner | None) -> int:
+def _cmd_validate(args: argparse.Namespace, agents: Agents) -> int:
     config = _load_cli_config(args.config)
     issues = validate_spec_set(config.paths.spec_dir)
     if issues:
@@ -151,6 +211,32 @@ def _cmd_validate(args: argparse.Namespace, planner: Planner | None) -> int:
     return 0
 
 
+def _resolve_artifacts_dir(repo: Path, configured: str) -> Path:
+    """Anchor ``paths.artifacts_dir`` at the repo root and vet its location.
+
+    The git layer excludes exactly ``.sdd-codex/`` from the dirty-tree
+    refusal, the freeze check and the rollback clean. An artifacts
+    directory inside the repo but outside ``.sdd-codex/`` would therefore
+    fail every attempt at the freeze step and get deleted by the rollback —
+    refuse it up front instead. A directory outside the repo is invisible
+    to git and always fine.
+    """
+    artifacts_dir = Path(configured)
+    if not artifacts_dir.is_absolute():
+        artifacts_dir = repo / artifacts_dir
+    try:
+        relative = artifacts_dir.resolve().relative_to(repo.resolve())
+    except ValueError:
+        return artifacts_dir  # outside the repository
+    if relative.parts[:1] != (ARTIFACTS_DIR,):
+        raise CliError(
+            f"paths.artifacts_dir {configured!r} is inside the repository "
+            f"but outside {ARTIFACTS_DIR}/; keep run artifacts under "
+            f"{ARTIFACTS_DIR}/ or outside the repository"
+        )
+    return artifacts_dir
+
+
 def _git_root(start: Path) -> Path | None:
     for candidate in (start, *start.parents):
         if (candidate / ".git").exists():
@@ -158,7 +244,7 @@ def _git_root(start: Path) -> Path | None:
     return None
 
 
-def _cmd_doctor(args: argparse.Namespace, planner: Planner | None) -> int:
+def _cmd_doctor(args: argparse.Namespace, agents: Agents) -> int:
     """D-20: one screen saying what is missing, before any paid call."""
     config_error: str | None = None
     try:
@@ -197,16 +283,23 @@ def _cmd_doctor(args: argparse.Namespace, planner: Planner | None) -> int:
     return 0 if all_ok else 1
 
 
-def main(argv: list[str] | None = None, *, planner: Planner | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    planner: Planner | None = None,
+    coder: CoderAgent | None = None,
+    reviewer: ReviewerAgent | None = None,
+) -> int:
     """Run the CLI; returns the process exit code.
 
-    ``planner`` lets tests substitute the agent; ``None`` means the real
-    Codex CLI planner.
+    ``planner``, ``coder`` and ``reviewer`` let tests substitute the agents;
+    ``None`` means the real Codex CLI agent for that role.
     """
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        return args.handler(args, planner)
+        agents = Agents(planner=planner, coder=coder, reviewer=reviewer)
+        return args.handler(args, agents)
     except CliError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return exc.exit_code

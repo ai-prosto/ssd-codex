@@ -134,6 +134,11 @@ def parse_config(data: dict[str, Any], source: str = DEFAULT_CONFIG_FILENAME) ->
         attempt_timeout_sec=run_section.integer("attempt_timeout_sec", 1800),
     )
     run_section.finish()
+    if run.max_retries < 1:
+        raise ConfigError(
+            f'{source}: key "run.max_retries" must be a positive integer '
+            "(every task needs at least one attempt, D-14)"
+        )
 
     verify_section = root.section("verify")
     verify = VerifyConfig(
