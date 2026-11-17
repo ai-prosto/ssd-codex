@@ -3,7 +3,7 @@
 Сгенерировано task_bridge из behaviour-spec бандла sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076 (шаг 3 плана развития конвейера; группировка задач — по Feature-секциям). Личный путь: бриф одобрен владельцем в разговоре, задачи исполняются сразу.
 
 ### TASK-001: Формат spec-runner и единственный конфиг
-P2 | TODO   Est: 0.5d
+P2 | 🔄 IN_PROGRESS   Est: 0.5d
 
 Реализовать сценарии BEH-01, BEH-02, BEH-03, BEH-04 (DT-01, группа solo).
 Source: workstreams/sdd-codex-markdown-codex-sdk-cli-runner-20261117-5076/spec/30-decomposition.md#DT-01
