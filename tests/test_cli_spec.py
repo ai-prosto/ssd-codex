@@ -489,3 +489,9 @@ def test_keyboard_interrupt_exits_130(
 
     assert cli.main(["spec", "x"], planner=interrupt) == 130
     assert "interrupted" in capsys.readouterr().err
+
+
+def test_planner_prompt_mandates_uv_and_forbids_backticks() -> None:
+    prompt = build_planner_prompt("anything")
+    assert "uv run pytest" in prompt
+    assert "backtick" in prompt
