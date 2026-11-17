@@ -36,3 +36,15 @@ class SpecFormatError(Exception):
 
 class ConfigError(Exception):
     """sdd-codex.config.yaml is missing, malformed, or has unknown keys."""
+
+
+class PlannerError(Exception):
+    """The planner agent failed or returned unusable output."""
+
+
+class CliError(Exception):
+    """A command refused to run; carries the process exit code."""
+
+    def __init__(self, message: str, exit_code: int = 1) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
