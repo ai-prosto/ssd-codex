@@ -22,7 +22,7 @@ from sdd_codex.errors import ConfigError
 
 DEFAULT_CONFIG_FILENAME = "sdd-codex.config.yaml"
 
-DEFAULT_MODEL = "gpt-5.1-codex"
+DEFAULT_MODEL = "gpt-6.1-sol"
 
 ROLES = ("planner", "coder", "reviewer")
 

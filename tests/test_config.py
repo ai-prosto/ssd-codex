@@ -106,7 +106,7 @@ budget:
 
 def test_defaults_without_config_sections(tmp_path: Path) -> None:
     config = load_config(write_config(tmp_path, "{}\n"))
-    assert config.openai.models.planner == "gpt-5.1-codex"
+    assert config.openai.models.planner == "gpt-6.1-sol"
     assert config.run.max_retries == 3
     assert config.verify.selector_runner == "uv run pytest {selectors} -q"
     assert config.paths.spec_dir == "spec"

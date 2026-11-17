@@ -42,5 +42,15 @@ the three sections is discarded.
 - Every task must be provable: its `Verifies`/`Test` entry fails before the
   task is implemented and passes after.
 - Dependencies must form no cycle and reference only existing task ids.
+- Field values are executed or matched literally: never wrap commands, paths
+  or selectors in markdown backticks or any other markup.
+
+# Environment
+
+The target repository is managed with `uv`; a bare `python` or `pip` may not
+exist there. Prefer `**Verifies:**` pytest selectors (the runner executes
+them itself). When a task needs a full `**Test:**` command, it must be
+runnable in a uv project: `uv run pytest -q tests/test_<module>.py` — never
+`python -m pip install` or bare `python`/`pytest`.
 
 Follow the templates below for the overall shape of each file.

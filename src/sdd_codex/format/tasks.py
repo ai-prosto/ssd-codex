@@ -92,8 +92,23 @@ class TaskDocument:
         return {task.id for task in self.tasks}
 
 
+def _strip_code_span(value: str) -> str:
+    """Unwrap a markdown code span around a command, path or selector.
+
+    Planner models wrap these values in backticks despite the format rules;
+    executing the raw value would look up a program literally named backtick-uv.
+    """
+    value = value.strip()
+    if len(value) >= 2 and value[0] == "`" and value[-1] == "`":
+        inner = value[1:-1].strip()
+        if "`" not in inner:
+            return inner
+    return value
+
+
 def _split_csv(value: str) -> list[str]:
-    return [part.strip() for part in value.split(",") if part.strip()]
+    parts = (_strip_code_span(part) for part in value.split(","))
+    return [part for part in parts if part]
 
 
 def parse_tasks(text: str, file: str | Path) -> TaskDocument:
@@ -209,7 +224,9 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
         if pending_list_field is not None:
             bullet = BULLET_RE.match(stripped)
             if bullet:
-                getattr(current, pending_list_field).append(bullet.group(1))
+                getattr(current, pending_list_field).append(
+                    _strip_code_span(bullet.group(1))
+                )
                 continue
             if stripped:
                 pending_list_field = None
@@ -278,7 +295,7 @@ def parse_tasks(text: str, file: str | Path) -> TaskDocument:
             elif name == "scenarios":
                 current.scenarios = _split_csv(value)
             elif name == "test":
-                current.test_command = value
+                current.test_command = _strip_code_span(value)
             elif name == "mode":
                 current.mode = value.lower()
             elif name == "checklist":

@@ -388,3 +388,28 @@ def test_verifies_block_form_and_blocks_field() -> None:
         "tests/test_b.py::test_two",
     ]
     assert task.blocks == ["TASK-002"]
+
+
+def test_markdown_backticks_are_stripped_from_commands_and_paths() -> None:
+    # Planner models tend to wrap commands and paths in markdown code spans;
+    # the parsed values must be plain text or the runner execs '`uv'.
+    text = (
+        "### TASK-001: Backticked fields\n"
+        "P2 | TODO\n\n"
+        "**Touches:** `src/app.py`, tests/test_app.py\n"
+        "**Test:** `uv run pytest -q tests/test_app.py`\n\n"
+        "### TASK-002: Backticked selectors\n"
+        "P2 | TODO\n\n"
+        "**Verifies:**\n"
+        "- `tests/test_app.py::test_one`\n"
+        "- tests/test_app.py::test_two\n"
+    )
+    doc = parse_tasks(text, "tasks.md")
+    assert doc.issues == []
+    first, second = doc.tasks
+    assert first.test_command == "uv run pytest -q tests/test_app.py"
+    assert first.touches == ["src/app.py", "tests/test_app.py"]
+    assert second.verifies == [
+        "tests/test_app.py::test_one",
+        "tests/test_app.py::test_two",
+    ]
